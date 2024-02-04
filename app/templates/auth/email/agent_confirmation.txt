@@ -1,0 +1,15 @@
+Dear {{ user.name }},
+
+Welcome to PLS!
+
+Your request has been confirmed.
+
+Agent code: {{ user.code }}
+
+Kindly note that, this code will be required during users' registration.
+
+Sincerely,
+
+The PLS Team
+
+Note: replies to this email address are not monitored.
