@@ -1,6 +1,5 @@
 from functools import wraps
 from flask_login import current_user
-from flask import g
 from .errors import forbidden
 from .models import Permission
 

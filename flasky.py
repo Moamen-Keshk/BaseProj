@@ -1,5 +1,10 @@
 import os
 from dotenv import load_dotenv
+import sys
+import click
+from flask_migrate import Migrate, upgrade
+from app import create_app, db
+from app.api.models import User, Role, Permission, Notification, OrderStatus
 
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
@@ -11,13 +16,6 @@ if os.environ.get('FLASK_COVERAGE'):
     COV = coverage.coverage(branch=True, include='app/*')
     COV.start()
 
-import sys
-import click
-from flask_migrate import Migrate, upgrade
-from app import create_app, db
-from app.api.models import User, Follow, Role, Permission, Post, Comment, Notification,\
-    Agent, OrderStatus, DocumentType, InvoiceStatus, ServiceType, Embassy, ServiceOption,\
-    Tariff, CollectionType, AWB, TariffAssist, Document
 
 app = create_app(os.getenv('FLASK_CONFIG') or 'default')
 migrate = Migrate(app, db)
@@ -25,22 +23,18 @@ migrate = Migrate(app, db)
 
 @app.shell_context_processor
 def make_shell_context():
-    return dict(db=db, User=User, Follow=Follow, Role=Role,
-                Permission=Permission, Post=Post, Comment=Comment,
-                Notification=Notification, Agent=Agent, OrderStatus=OrderStatus,
-                DocumentType=DocumentType, InvoiceStatus=InvoiceStatus, ServiceType=ServiceType,
-                Embassy=Embassy, ServiceOption=ServiceOption, Tariff=Tariff,
-                CollectionType=CollectionType, AWB=AWB, TariffAssist=TariffAssist,
-                Document=Document)
+    return dict(db=db, User=User, Role=Role,
+                Permission=Permission,
+                Notification=Notification, OrderStatus=OrderStatus)
 
 
 @app.cli.command()
 @click.option('--coverage/--no-coverage', default=False,
               help='Run tests under code coverage.')
 @click.argument('test_names', nargs=-1)
-def test(coverage, test_names):
+def test(coverages, test_names):
     """Run the unit tests."""
-    if coverage and not os.environ.get('FLASK_COVERAGE'):
+    if coverages and not os.environ.get('FLASK_COVERAGE'):
         import subprocess
         os.environ['FLASK_COVERAGE'] = '1'
         sys.exit(subprocess.call(sys.argv))
@@ -70,7 +64,7 @@ def test(coverage, test_names):
               help='Directory where profiler data files are saved.')
 def profile(length, profile_dir):
     """Start the application under the code profiler."""
-    from werkzeug.contrib.profiler import ProfilerMiddleware
+    from werkzeug.middleware.profiler import ProfilerMiddleware
     app.wsgi_app = ProfilerMiddleware(app.wsgi_app, restrictions=[length],
                                       profile_dir=profile_dir)
     app.run()
@@ -89,12 +83,3 @@ def deploy():
     User.add_self_follows()
 
     OrderStatus.insert_status()
-    DocumentType.insert_document_types()
-    InvoiceStatus.insert_invoice_status()
-    ServiceType.insert_service_types()
-    Embassy.insert_embassies()
-    ServiceOption.insert_service_options()
-    Tariff.insert_tariffs()
-    CollectionType.insert_collection_types()
-    TariffAssist.insert_tariffs()
-

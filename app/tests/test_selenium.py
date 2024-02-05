@@ -3,9 +3,11 @@ import threading
 import time
 import unittest
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from app import create_app, db
 from app.api import fake
-from app.api.models import Role, User, Post
+from app.api.models import Role, User
+import logging
 
 
 class SeleniumTestCase(unittest.TestCase):
@@ -17,8 +19,9 @@ class SeleniumTestCase(unittest.TestCase):
         options = webdriver.ChromeOptions()
         options.add_argument('headless')
         try:
-            cls.client = webdriver.Chrome(chrome_options=options)
-        except:
+            cls.client = webdriver.Chrome(options=options)
+        except Exception as e:
+            logging.exception(e)
             pass
 
         # skip these tests if the browser could not be started
@@ -29,7 +32,6 @@ class SeleniumTestCase(unittest.TestCase):
             cls.app_context.push()
 
             # suppress logging to keep unittest output clean
-            import logging
             logger = logging.getLogger('werkzeug')
             logger.setLevel("ERROR")
 
@@ -37,7 +39,6 @@ class SeleniumTestCase(unittest.TestCase):
             db.create_all()
             Role.insert_roles()
             fake.users(10)
-            fake.posts(10)
 
             # add an administrator user
             admin_role = Role.query.filter_by(name='Administrator').first()
@@ -80,20 +81,19 @@ class SeleniumTestCase(unittest.TestCase):
     def test_admin_home_page(self):
         # navigate to home page
         self.client.get('http://localhost:5000/')
-        self.assertTrue(re.search('Hello,\s+Stranger!',
+        self.assertTrue(re.search('Hello, Stranger!',
                                   self.client.page_source))
 
         # navigate to login page
-        self.client.find_element_by_link_text('Log In').click()
+        self.client.find_element(By.LINK_TEXT('Log In')).click()
         self.assertIn('<h1>Login</h1>', self.client.page_source)
 
         # login
-        self.client.find_element_by_name('email').\
-            send_keys('john@example.com')
-        self.client.find_element_by_name('password').send_keys('cat')
-        self.client.find_element_by_name('submit').click()
-        self.assertTrue(re.search('Hello,\s+john!', self.client.page_source))
+        self.client.find_element(By.NAME('email')).send_keys('john@example.com')
+        self.client.find_element(By.NAME('password')).send_keys('cat')
+        self.client.find_element(By.NAME('submit')).click()
+        self.assertTrue(re.search('Hello, john!', self.client.page_source))
 
         # navigate to the user's profile page
-        self.client.find_element_by_link_text('Profile').click()
+        self.client.find_element(By.LINK_TEXT('Profile')).click()
         self.assertIn('<h1>john</h1>', self.client.page_source)

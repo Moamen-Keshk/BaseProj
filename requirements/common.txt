@@ -38,3 +38,4 @@ pycparser==2.21
 cffi==1.16.0
 cryptography==42.0.2
 Flask-Cors==4.0.0
+Flask-SSLify==0.1.5

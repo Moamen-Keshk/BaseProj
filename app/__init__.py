@@ -7,7 +7,6 @@ from flask_moment import Moment
 from flask_pagedown import PageDown
 from flask_sqlalchemy import SQLAlchemy
 from config import config
-import os
 import pymysql
 pymysql.install_as_MySQLdb()
 
@@ -36,7 +35,7 @@ def create_app(config_name):
 
     if app.config['SSL_REDIRECT']:
         from flask_sslify import SSLify
-        sslify = SSLify(app)
+        SSLify(app)
 
     from .auth import auth as auth_blueprint
     app.register_blueprint(auth_blueprint, url_prefix='/auth')

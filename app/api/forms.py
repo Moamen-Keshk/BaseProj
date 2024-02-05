@@ -82,11 +82,13 @@ class RegistrationForm(FlaskForm):
     password2 = PasswordField('Confirm password', validators=[DataRequired()])
     submit = SubmitField('Register')
 
-    def validate_email(self, field):
+    @staticmethod
+    def validate_email(field):
         if User.query.filter_by(email=field.data.lower()).first():
             raise ValidationError('Email already registered.')
 
-    def validate_username(self, field):
+    @staticmethod
+    def validate_username(field):
         if User.query.filter_by(username=field.data).first():
             raise ValidationError('Username already in use.')
 
@@ -119,6 +121,7 @@ class ChangeEmailForm(FlaskForm):
     password = PasswordField('Password', validators=[DataRequired()])
     submit = SubmitField('Update Email Address')
 
-    def validate_email(self, field):
+    @staticmethod
+    def validate_email(field):
         if User.query.filter_by(email=field.data.lower()).first():
             raise ValidationError('Email already registered.')

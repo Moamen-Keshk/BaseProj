@@ -1,12 +1,12 @@
 from flask import request, make_response, jsonify, current_app
-from .models import Order, Document
 from . import api
+import logging
+from .models import Order
 from .. import db
 from app.auth.views import token_auth
 from werkzeug.utils import secure_filename
 import os
 from flask import send_from_directory
-from werkzeug.datastructures import ImmutableMultiDict
 
 
 @api.route('/orders', methods=['POST'])
@@ -24,8 +24,6 @@ def new_order():
             for i in range(len(request.files)):
                 filename = str(order_id) + ': ' + secure_filename(files[str(i)].filename)
                 files[str(i)].save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
-                document = Document(filename=filename, order_id=order_id)
-                db.session.add(document)
             db.session.commit()
             responseObject = {
                 'status': 'success',
@@ -33,6 +31,7 @@ def new_order():
             }
             return make_response(jsonify(responseObject)), 200
         except Exception as e:
+            logging.exception(e)
             responseObject = {
                 'status': 'error',
                 'message': 'Some error occurred. Please try again.'

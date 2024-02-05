@@ -1,8 +1,7 @@
-from random import randint
 from sqlalchemy.exc import IntegrityError
 from faker import Faker
 from .. import db
-from .models import User, Post
+from .models import User
 
 
 def users(count=100):
@@ -23,15 +22,3 @@ def users(count=100):
             i += 1
         except IntegrityError:
             db.session.rollback()
-
-
-def posts(count=100):
-    fake = Faker()
-    user_count = User.query.count()
-    for i in range(count):
-        u = User.query.offset(randint(0, user_count - 1)).first()
-        p = Post(body=fake.text(),
-                 timestamp=fake.past_date(),
-                 author=u)
-        db.session.add(p)
-    db.session.commit()

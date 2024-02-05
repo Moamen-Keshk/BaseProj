@@ -1,5 +1,4 @@
 from flask import render_template, jsonify, request
-from flask_login import current_user
 from .exceptions import ValidationError
 from . import api
 
@@ -28,7 +27,7 @@ def validation_error(e):
 
 
 @api.app_errorhandler(404)
-def page_not_found(e):
+def page_not_found():
     if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
         response = jsonify({'error': 'not found'})
         response.status_code = 404
