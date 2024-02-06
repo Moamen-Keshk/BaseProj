@@ -7,7 +7,7 @@ from .forms import EditProfileAdminForm
 from .. import db
 from .models import Role, User, Notification, Order
 from .decorators import admin_required
-from app.auth.views import basic_auth, token_auth
+from app.auth.views import get_current_user
 
 
 @api.after_app_request
@@ -33,9 +33,8 @@ def server_shutdown():
 
 
 @api.route('/avatar')
-@token_auth.login_required
 def avatar():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         user = User.query.get_or_404(resp)
         responseObject = {
@@ -51,9 +50,8 @@ def avatar():
 
 
 @api.route('/notifs-count')
-@token_auth.login_required
 def notifications_count():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         responseObject = {
             'status': 'success',
@@ -68,9 +66,8 @@ def notifications_count():
 
 
 @api.route('/notifications')
-@token_auth.login_required
 def notifications():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         notifications_list = Notification.query.filter_by(to_user=resp, is_read=False).order_by(
             Notification.timestamp.desc()).limit(6).all()
@@ -90,9 +87,8 @@ def notifications():
 
 
 @api.route('/all-notifications')
-@token_auth.login_required
 def all_notifications():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         notifications_list = Notification.query.filter_by(
             to_user=resp, is_read=False).order_by(Notification.timestamp.desc()).all()
@@ -112,9 +108,8 @@ def all_notifications():
 
 
 @api.route('/order-list/<int:status_id>')
-@token_auth.login_required
 def order_list(status_id):
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         try:
             orders_list = [o.to_json() for o in Order.query.filter_by(
@@ -140,9 +135,8 @@ def order_list(status_id):
 
 
 @api.route('/order-detail/<int:order_id>')
-@token_auth.login_required
 def order_detail(order_id):
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         try:
             orders_detail = Order.query.get_or_404(order_id).to_json()
@@ -167,9 +161,8 @@ def order_detail(order_id):
 
 
 @api.route('/advance-orders', methods=['GET', 'POST'])
-@token_auth.login_required
 def advance_orders():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         try:
             orders_list = Order.query.filter(Order.id.in_(request.get_json().get('order_ids'))).all()
@@ -198,9 +191,8 @@ def advance_orders():
 
 
 @api.route('/edit-profile', methods=['GET', 'POST'])
-@token_auth.login_required
 def edit_profile():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         user = User.query.get_or_404(resp)
         post_data = request.get_json()
@@ -223,7 +215,6 @@ def edit_profile():
 
 
 @api.route('/edit-profile/<int:id>', methods=['GET', 'POST'])
-@basic_auth.login_required
 @admin_required
 def edit_profile_admin(idi):
     user = User.query.get_or_404(idi)

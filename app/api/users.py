@@ -1,13 +1,12 @@
 from flask import make_response, jsonify
 from . import api
 from .models import User
-from app.auth.views import token_auth
+from app.auth.views import get_current_user
 
 
 @api.route('/users')
-@token_auth.login_required
 def get_user():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         user = User.query.get_or_404(resp)
         responseObject = {

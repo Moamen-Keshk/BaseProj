@@ -3,16 +3,15 @@ from . import api
 import logging
 from .models import Order
 from .. import db
-from app.auth.views import token_auth
+from app.auth.views import get_current_user
 from werkzeug.utils import secure_filename
 import os
 from flask import send_from_directory
 
 
 @api.route('/orders', methods=['POST'])
-@token_auth.login_required
 def new_order():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         try:
             order = Order.from_json(dict(request.form))

@@ -1,59 +1,38 @@
 import os
 import logging
-from flask import make_response, jsonify, redirect, request, g
-from werkzeug.security import check_password_hash
+from flask import make_response, jsonify, redirect
 from flask.views import MethodView
 from app.api.email import send_email
-from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth, MultiAuth
-from app.api.errors import unauthorized
-from itsdangerous import (URLSafeTimedSerializer as Serializer)
-from app.api import api
 from . import auth
+from typing import Optional
+from flask import request
+from firebase_admin.auth import verify_id_token
 
 from .. import db
 from app.api.models import User
 
-basic_auth = HTTPBasicAuth()
-token_auth = HTTPTokenAuth('Bearer')
-multi_auth = MultiAuth(basic_auth, token_auth)
 
-jws = Serializer(os.environ.get('SECRET_KEY'))
+def get_current_user() -> Optional[str]:
+    # Return None if no Authorization header.
+    if "Authorization" not in request.headers:
+        return None
+    authorization = request.headers["Authorization"]
 
+    # Authorization header format is "Bearer <token>".
+    # This matches OAuth 2.0 spec:
+    # https://www.rfc-editor.org/rfc/rfc6750.txt.
+    if not authorization.startswith("Bearer "):
+        return None
 
-@basic_auth.verify_password
-def verify_password(email_or_token, password):
-    # first try to authenticate by token
-    user = User.verify_auth_token(email_or_token)
-    if not user:
-        # try to authenticate with username/password
-        user = User.query.filter_by(email=email_or_token).first()
-        if not user or not user.verify_password(password):
-            return False
-    g.user = user
-    return True
-
-
-@token_auth.verify_token
-def verify_token(token):
+    token = authorization.split("Bearer ")[1]
     try:
-        data = jws.loads(token)
+        # Verify that the token is valid.
+        result = verify_id_token(token, clock_skew_seconds=10)
+        # Return the user ID of the authenticated user.
+        return result["uid"]
     except Exception as e:
         logging.exception(e)
-        return False
-    if 'id' in data:
-        return data['id']
-
-
-@token_auth.error_handler
-def auth_error():
-    return unauthorized('Invalid credentials')
-
-
-@api.route('/token')
-@basic_auth.login_required
-def get_auth_token():
-    token = g.user.generate_auth_token(3600)
-    return jsonify({'token': token})
+        return None
 
 
 class RegisterAPI(MethodView):
@@ -84,15 +63,10 @@ class RegisterAPI(MethodView):
                 # insert the user
                 db.session.add(user)
                 db.session.commit()
-                token = user.generate_confirmation_token()
-                send_email(user.email, 'Confirm Your Account',
-                           'auth/email/confirm', user=user, token=token)
                 # generate the auth token
-                auth_token = user.generate_auth_token()
                 responseObject = {
                     'status': 'success',
-                    'message': 'Successfully registered.',
-                    'auth_token': auth_token
+                    'message': 'Successfully registered.'
                 }
                 return make_response(jsonify(responseObject)), 201
             except Exception as e:
@@ -110,50 +84,8 @@ class RegisterAPI(MethodView):
             return make_response(jsonify(responseObject)), 202
 
 
-class LoginAPI(MethodView):
-    """
-    User Login Resource
-    """
-
-    @staticmethod
-    def post():
-        # get the post data
-        post_data = request.get_json()
-        try:
-            # fetch the user data
-            user = User.query.filter_by(
-                email=post_data.get('email')
-            ).first()
-            if user and check_password_hash(
-                    user.password_hash, post_data.get('password')
-            ):
-                auth_token = user.generate_auth_token(3600*10)
-                if auth_token:
-                    responseObject = {
-                        'status': 'success',
-                        'message': 'Successfully logged in.',
-                        'auth_token': auth_token,
-                        'avatar_hash': user.gravatar(size=18)
-                    }
-                    return make_response(jsonify(responseObject)), 200
-            else:
-                responseObject = {
-                    'status': 'fail',
-                    'message': 'Invalid credentials.'
-                }
-                return make_response(jsonify(responseObject)), 202
-        except Exception as e:
-            print(e)
-            responseObject = {
-                'status': 'fail',
-                'message': 'Try again'
-            }
-            return make_response(jsonify(responseObject)), 500
-
-
 # define the API resources
 registration_view = RegisterAPI.as_view('register_api')
-login_view = LoginAPI.as_view('login_api')
 
 # add Rules for API Endpoints
 auth.add_url_rule(
@@ -161,40 +93,6 @@ auth.add_url_rule(
     view_func=registration_view,
     methods=['POST']
 )
-auth.add_url_rule(
-    '/login',
-    view_func=login_view,
-    methods=['GET', 'POST']
-)
-
-
-@auth.route('/confirm/<token>')
-def confirm(token):
-    current_user = User.verify_confirmation_token(token)
-    if not bool(current_user):
-        return redirect(
-            os.environ.get('BASE_LINK') + '/flash/' + 'An error occured, try resend confirmation link!$home')
-    if current_user.confirmed:
-        return redirect(os.environ.get('BASE_LINK') + '/home')
-    if current_user.confirm(token):
-        db.session.commit()
-        return redirect(os.environ.get('BASE_LINK') + '/flash/' + 'You have confirmed your account£ Thanks!$home')
-    else:
-        return redirect(
-            os.environ.get('BASE_LINK') + '/flash/' + 'The confirmation link is invalid or has expired£$home')
-
-
-@auth.route('/re-confirm/<token>')
-def resend_confirmation(token):
-    current_user = User.verify_auth_token(token)
-    if bool(current_user):
-        token = current_user.generate_confirmation_token()
-        send_email(current_user.email, 'Confirm Your Account',
-                   'auth/email/confirm', user=current_user, token=token)
-        return redirect(os.environ.get('BASE_LINK') + '/flash/' + 'A new confirmation email has been sent to you by '
-                                                                  'email£$home')
-    else:
-        return redirect(os.environ.get('BASE_LINK') + '/flash/' + 'Session expired, log in required£$login')
 
 
 @auth.route('/reset', methods=['GET', 'POST'])
@@ -232,9 +130,8 @@ def password_reset(token):
 
 
 @auth.route('/change_email', methods=['GET', 'POST'])
-@token_auth.login_required
 def change_email_request():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         user = User.query.get_or_404(resp)
         post_data = request.get_json()
@@ -276,9 +173,8 @@ def change_email(token):
 
 
 @auth.route('/change-password', methods=['GET', 'POST'])
-@token_auth.login_required
 def change_password():
-    resp = token_auth.current_user()
+    resp = get_current_user()
     if not isinstance(resp, str):
         user = User.query.get_or_404(resp)
         post_data = request.get_json()

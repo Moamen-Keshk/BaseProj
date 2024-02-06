@@ -7,6 +7,9 @@ from flask_moment import Moment
 from flask_pagedown import PageDown
 from flask_sqlalchemy import SQLAlchemy
 from config import config
+import os
+from firebase_admin import initialize_app
+from firebase_admin import credentials
 import pymysql
 pymysql.install_as_MySQLdb()
 
@@ -15,6 +18,7 @@ mail = Mail()
 moment = Moment()
 db = SQLAlchemy()
 pagedown = PageDown()
+cred = credentials.Certificate(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))
 
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login_api'
@@ -32,6 +36,7 @@ def create_app(config_name):
     db.init_app(app)
     login_manager.init_app(app)
     pagedown.init_app(app)
+    initialize_app(cred)
 
     if app.config['SSL_REDIRECT']:
         from flask_sslify import SSLify
