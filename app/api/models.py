@@ -75,7 +75,7 @@ class Role(db.Model):
 
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
+    uid = db.Column(db.String(32), primary_key=True)
     email = db.Column(db.String(64), unique=True, index=True)
     username = db.Column(db.String(64), unique=True, index=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
@@ -88,6 +88,7 @@ class User(UserMixin, db.Model):
     last_seen = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     avatar_hash = db.Column(db.String(32))
     orders = db.relationship('Order', backref='creator', lazy='dynamic')
+    notifications = db.relationship('Notification', backref='to_user_uid', lazy='dynamic')
 
     def __init__(self, **kwargs):
         super(User, self).__init__(**kwargs)
@@ -108,7 +109,7 @@ class User(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password, method='pbkdf2:sha256:1000')
 
     def verify_password(self, password):
-        return check_password_hash(self.password_hash, password, method='pbkdf2:sha256:1000')
+        return check_password_hash(self.password_hash, password)
 
     def generate_confirmation_token(self):
         s = Serializer(current_app.config['SECRET_KEY'])
@@ -273,7 +274,7 @@ class Notification(db.Model):
     timestamp = db.Column(db.DateTime, index=True, default=datetime.now(timezone.utc))
     is_read = db.Column(db.Boolean, default=False)
     has_action = db.Column(db.Boolean, default=False)
-    to_user = db.Column(db.Integer, db.ForeignKey('users.id'))
+    to_user = db.Column(db.String(32), db.ForeignKey('users.uid'))
 
     def to_json(self):
         json_notification = {
@@ -301,7 +302,7 @@ class Order(db.Model):
     sending_date = db.Column(db.Date())
     fee = db.Column(db.Integer)
     order_date = db.Column(db.Date(), default=datetime.today().date())
-    creator_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    creator_id = db.Column(db.String(32), db.ForeignKey('users.uid'))
 
     def __init__(self, **kwargs):
         super(Order, self).__init__(**kwargs)

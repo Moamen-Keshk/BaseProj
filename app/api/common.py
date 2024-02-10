@@ -51,16 +51,16 @@ def avatar():
 
 @api.route('/notifs-count')
 def notifications_count():
-    resp = get_current_user()
-    if not isinstance(resp, str):
+    uid = get_current_user()
+    if not isinstance(uid, str):
         responseObject = {
             'status': 'success',
-            'data': Notification.query.filter_by(to_user=resp, is_read=False).count()
+            'data': Notification.query.filter_by(to_user=uid, is_read=False).count()
         }
         return make_response(jsonify(responseObject)), 200
     responseObject = {
         'status': 'fail',
-        'message': resp
+        'message': uid
     }
     return make_response(jsonify(responseObject)), 401
 

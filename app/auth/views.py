@@ -55,6 +55,7 @@ class RegisterAPI(MethodView):
                 return make_response(jsonify(responseObject)), 202
             try:
                 user = User(
+                    uid=get_current_user(),
                     username=post_data.get('username'),
                     email=post_data.get('email'),
                     password=post_data.get('password'),
