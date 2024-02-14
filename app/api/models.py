@@ -7,7 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app, url_for
 from flask_login import UserMixin, AnonymousUserMixin
 
-from .. import db, login_manager
+from .. import db
 import random
 from .constants import Constants
 
@@ -258,32 +258,27 @@ class AnonymousUser(AnonymousUserMixin):
         return False
 
 
-login_manager.anonymous_user = AnonymousUser
-
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
-
-
 class Notification(db.Model):
     __tablename__ = 'notifications'
     id = db.Column(db.Integer, primary_key=True)
-    subject = db.Column(db.Text)
-    type = db.Column(db.Text)
+    body = db.Column(db.Text)
+    title = db.Column(db.String(64))
     timestamp = db.Column(db.DateTime, index=True, default=datetime.now(timezone.utc))
     is_read = db.Column(db.Boolean, default=False)
     has_action = db.Column(db.Boolean, default=False)
     to_user = db.Column(db.String(32), db.ForeignKey('users.uid'))
+    routing = db.Column(db.String(32))
 
     def to_json(self):
         json_notification = {
             'id': self.id,
-            'subject': self.subject,
-            'type': self.type,
+            'body': self.body,
+            'title': self.title,
             'is_read': self.is_read,
             'has_action': self.has_action,
-            'from_user': self.from_user
+            'to_user': self.to_user,
+            'fire_date': self.timestamp,
+            'routing': self.routing
         }
         return json_notification
 

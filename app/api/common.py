@@ -68,7 +68,7 @@ def notifications_count():
 @api.route('/notifications')
 def notifications():
     resp = get_current_user()
-    if not isinstance(resp, str):
+    if isinstance(resp, str):
         notifications_list = Notification.query.filter_by(to_user=resp, is_read=False).order_by(
             Notification.timestamp.desc()).limit(6).all()
         for x in notifications_list:
@@ -78,7 +78,7 @@ def notifications():
             'data': notifications_list,
             'page': 0
         }
-        return make_response(jsonify(responseObject)), 200
+        return make_response(jsonify(responseObject)), 201
     responseObject = {
         'status': 'fail',
         'message': resp

@@ -1,7 +1,9 @@
 from flask import Blueprint
-from .models import Permission
 
 api = Blueprint('api', __name__)
+
+from .models import Permission
+from . import common
 
 
 @api.app_context_processor
