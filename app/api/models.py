@@ -368,3 +368,98 @@ class OrderStatus(db.Model):
                 stat = OrderStatus(name=s, code=status[s][0], color=status[s][1])
             db.session.add(stat)
         db.session.commit()
+
+
+class Property(db.Model):
+    __tablename__ = 'properties'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(32))
+
+    def __init__(self, **kwargs):
+        super(Property, self).__init__(**kwargs)
+
+    def to_json(self):
+        json_property = {
+            'id': self.id,
+            'name': self.name
+        }
+        return json_property
+
+    @staticmethod
+    def from_json(json_property):
+        name = json_property.get('name')
+        return Property(name=name)
+
+
+class Category(db.Model):
+    __tablename__ = 'categories'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(32))
+    description = db.Column(db.String(64))
+
+    def __init__(self, **kwargs):
+        super(Category, self).__init__(**kwargs)
+
+    def to_json(self):
+        json_category = {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description
+        }
+        return json_category
+
+    @staticmethod
+    def from_json(json_category):
+        name = json_category.get('name')
+        return Category(name=name)
+
+
+class Room(db.Model):
+    __tablename__ = 'rooms'
+    id = db.Column(db.Integer, primary_key=True)
+    room_number = db.Column(db.Integer)
+    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'))
+    floor_id = db.Column(db.Integer, db.ForeignKey('floors.id'))
+
+    def __init__(self, **kwargs):
+        super(Room, self).__init__(**kwargs)
+
+    def to_json(self):
+        json_room = {
+            'id': self.id,
+            'room_number': self.room_number,
+            'category_id': self.category_id,
+            'floor_id': self.floor_id
+        }
+        return json_room
+
+    @staticmethod
+    def from_json(json_room):
+        room_number = json_room.get('room_number')
+        category_id = json_room.get('category_id')
+        floor_id = json_room.get('floor_id')
+        return Room(room_number=room_number, category_id=category_id, floor_id=floor_id)
+
+
+class Floor(db.Model):
+    __tablename__ = 'floors'
+    id = db.Column(db.Integer, primary_key=True)
+    floor_number = db.Column(db.Integer)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
+
+    def __init__(self, **kwargs):
+        super(Floor, self).__init__(**kwargs)
+
+    def to_json(self):
+        json_floor = {
+            'id': self.id,
+            'floor_number': self.floor_number,
+            'property_id': self.property_id
+        }
+        return json_floor
+
+    @staticmethod
+    def from_json(json_floor):
+        floor_number = json_floor.get('floor_number')
+        property_id = json_floor.get('property_id')
+        return Floor(floor_number=floor_number, property_id=property_id)
