@@ -80,6 +80,4 @@ def deploy():
     Role.insert_roles()
 
     # ensure all users are following themselves
-    User.add_self_follows()
-
     OrderStatus.insert_status()
