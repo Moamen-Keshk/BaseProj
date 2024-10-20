@@ -374,6 +374,9 @@ class Property(db.Model):
     __tablename__ = 'properties'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(32))
+    address = db.Column(db.String(64))
+    status_id = db.Column(db.Integer, db.ForeignKey('property_status.id'), default=1)
+    published_date = db.Column(db.Date(), default=datetime.today().date())
 
     def __init__(self, **kwargs):
         super(Property, self).__init__(**kwargs)
@@ -381,15 +384,41 @@ class Property(db.Model):
     def to_json(self):
         json_property = {
             'id': self.id,
-            'name': self.name
+            'name': self.name,
+            'address': self.address,
+            'status': Constants.PropertyStatusCoding[self.status_id],
+            'published_date': self.published_date.strftime("%d-%m-%y"),
         }
         return json_property
 
     @staticmethod
     def from_json(json_property):
         name = json_property.get('name')
-        return Property(name=name)
+        address = json_property.get('address')
+        return Property(name=name, address=address)
 
+class PropertyStatus(db.Model):
+    __tablename__ = 'property_status'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(64), unique=True)
+    name = db.Column(db.String(64), unique=True)
+    color = db.Column(db.String(64), unique=True)
+
+    @staticmethod
+    def insert_status():
+        status = {
+            'Open': ['Open', 'Green'],
+            'Pre-Open': ['PRE-OPEN', 'yellow'],
+            'Hold': ['HOLD', 'blue'],
+            'Closed': ['CLOSED', 'red'],
+            'Maintain': ['MAINTAIN', 'brown']
+        }
+        for s in status:
+            stat = PropertyStatus.query.filter_by(name=s).first()
+            if stat is None:
+                stat = PropertyStatus(name=s, code=status[s][0], color=status[s][1])
+            db.session.add(stat)
+        db.session.commit()
 
 class Category(db.Model):
     __tablename__ = 'categories'

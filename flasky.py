@@ -4,7 +4,7 @@ import sys
 import click
 from flask_migrate import Migrate, upgrade
 from app import create_app, db
-from app.api.models import User, Role, Permission, Notification, OrderStatus
+from app.api.models import User, Role, Permission, Notification, OrderStatus, PropertyStatus
 
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
@@ -81,3 +81,5 @@ def deploy():
 
     # ensure all users are following themselves
     OrderStatus.insert_status()
+
+    PropertyStatus.insert_status()

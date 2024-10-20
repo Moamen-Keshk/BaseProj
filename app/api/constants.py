@@ -14,3 +14,16 @@ class Constants:
             5: 'Completed',
             6: 'Shipped'
         }
+
+    PropertyStatusCoding = {
+            'Open': 1,
+            'Pre-Open': 2,
+            'Hold': 3,
+            'Closed': 4,
+            'Maintain': 5,
+            1: 'Open',
+            2: 'Pre-Open',
+            3: 'Hold',
+            4: 'Closed',
+            5: 'Maintain'
+    }
