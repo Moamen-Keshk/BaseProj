@@ -27,3 +27,12 @@ class Constants:
             4: 'Closed',
             5: 'Maintain'
     }
+
+    RoomStatusCoding = {
+            'Open': 1,
+            'Blocked': 2,
+            'Maintain': 3,
+            1: 'Open',
+            2: 'Blocked',
+            3: 'Maintain'
+    }

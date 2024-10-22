@@ -87,7 +87,7 @@ class User(UserMixin, db.Model):
     member_since = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     last_seen = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     avatar_hash = db.Column(db.String(32))
-    orders = db.relationship('Order', backref='creator', lazy='dynamic')
+    orders = db.relationship('Order', backref='creator_id', lazy='dynamic')
     notifications = db.relationship('Notification', backref='to_user_uid', lazy='dynamic')
 
     def __init__(self, **kwargs):
@@ -407,7 +407,7 @@ class PropertyStatus(db.Model):
     @staticmethod
     def insert_status():
         status = {
-            'Open': ['Open', 'Green'],
+            'Open': ['OPEN', 'Green'],
             'Pre-Open': ['PRE-OPEN', 'yellow'],
             'Hold': ['HOLD', 'blue'],
             'Closed': ['CLOSED', 'red'],
@@ -449,6 +449,7 @@ class Room(db.Model):
     room_number = db.Column(db.Integer)
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'))
     floor_id = db.Column(db.Integer, db.ForeignKey('floors.id'))
+    status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), default=1)
 
     def __init__(self, **kwargs):
         super(Room, self).__init__(**kwargs)
@@ -470,11 +471,33 @@ class Room(db.Model):
         return Room(room_number=room_number, category_id=category_id, floor_id=floor_id)
 
 
+class RoomStatus(db.Model):
+    __tablename__ = 'room_status'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(64), unique=True)
+    name = db.Column(db.String(64), unique=True)
+    color = db.Column(db.String(64), unique=True)
+
+    @staticmethod
+    def insert_status():
+        status = {
+            'Open': ['OPEN', 'Green'],
+            'Blocked': ['BLOCKED', 'red'],
+            'Maintain': ['MAINTAIN', 'yellow']
+        }
+        for s in status:
+            stat = RoomStatus.query.filter_by(name=s).first()
+            if stat is None:
+                stat = RoomStatus(name=s, code=status[s][0], color=status[s][1])
+            db.session.add(stat)
+        db.session.commit()
+
 class Floor(db.Model):
     __tablename__ = 'floors'
     id = db.Column(db.Integer, primary_key=True)
     floor_number = db.Column(db.Integer)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
+    rooms = db.relationship('Room', backref='floor_id', lazy='dynamic')
 
     def __init__(self, **kwargs):
         super(Floor, self).__init__(**kwargs)
