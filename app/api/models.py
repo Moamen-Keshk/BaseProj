@@ -87,7 +87,7 @@ class User(UserMixin, db.Model):
     member_since = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     last_seen = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     avatar_hash = db.Column(db.String(32))
-    orders = db.relationship('Order', backref='creator_id', lazy='dynamic')
+    orders = db.relationship('Order', backref='creator', lazy='dynamic')
     notifications = db.relationship('Notification', backref='to_user_uid', lazy='dynamic')
 
     def __init__(self, **kwargs):
@@ -497,7 +497,7 @@ class Floor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     floor_number = db.Column(db.Integer)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
-    rooms = db.relationship('Room', backref='floor_id', lazy='dynamic')
+    rooms = db.relationship('Room', backref='floor', lazy='dynamic')
 
     def __init__(self, **kwargs):
         super(Floor, self).__init__(**kwargs)
