@@ -459,7 +459,8 @@ class Room(db.Model):
             'id': self.id,
             'room_number': self.room_number,
             'category_id': self.category_id,
-            'floor_id': self.floor_id
+            'floor_id': self.floor_id,
+            'status_id': self.status_id
         }
         return json_room
 
@@ -468,7 +469,8 @@ class Room(db.Model):
         room_number = json_room.get('room_number')
         category_id = json_room.get('category_id')
         floor_id = json_room.get('floor_id')
-        return Room(room_number=room_number, category_id=category_id, floor_id=floor_id)
+        status_id = json_room.get('status_id')
+        return Room(room_number=room_number, category_id=category_id, floor_id=floor_id, status_id=status_id)
 
 
 class RoomStatus(db.Model):
@@ -506,7 +508,8 @@ class Floor(db.Model):
         json_floor = {
             'id': self.id,
             'floor_number': self.floor_number,
-            'property_id': self.property_id
+            'property_id': self.property_id,
+            'rooms': self.rooms
         }
         return json_floor
 
@@ -514,4 +517,8 @@ class Floor(db.Model):
     def from_json(json_floor):
         floor_number = json_floor.get('floor_number')
         property_id = json_floor.get('property_id')
-        return Floor(floor_number=floor_number, property_id=property_id)
+        rooms = json_floor.get('rooms')
+        rooms_list = []
+        for room in rooms:
+            rooms_list.append(Room.from_json(room))
+        return Floor(floor_number=floor_number, property_id=property_id, rooms=rooms_list)
