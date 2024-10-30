@@ -5,7 +5,7 @@ from . import api
 import logging
 from .forms import EditProfileAdminForm
 from .. import db
-from .models import Role, User, Notification, Order, Property
+from .models import Role, User, Notification, Order, Property, Category
 from .decorators import admin_required
 from app.auth.views import get_current_user
 
@@ -153,6 +153,25 @@ def all_properties():
     }
     return make_response(jsonify(responseObject)), 401
 
+@api.route('/all-categories')
+def all_categories():
+    resp = get_current_user()
+    if isinstance(resp, str):
+        categories_list = Category.query.order_by(Category.id).all()
+        for x in categories_list:
+            categories_list[categories_list.index(x)] = x.to_json()
+        responseObject = {
+            'status': 'success',
+            'data': categories_list,
+            'page': 0
+        }
+        return make_response(jsonify(responseObject)), 201
+    responseObject = {
+        'status': 'fail',
+        'message': resp
+    }
+    return make_response(jsonify(responseObject)), 401
+
 
 @api.route('/order-detail/<int:order_id>')
 def order_detail(order_id):
@@ -237,6 +256,32 @@ def new_property():
     }
     return make_response(jsonify(responseObject)), 202
 
+@api.route('/new-category', methods=['POST'])
+def new_category():
+    resp = get_current_user()
+    if isinstance(resp, str):
+        try:
+            category_new = Category.from_json(dict(request.json))
+            db.session.add(category_new)
+            db.session.flush()
+            db.session.commit()
+            responseObject = {
+                'status': 'success',
+                'message': 'Category added.'
+            }
+            return make_response(jsonify(responseObject)), 201
+        except Exception as e:
+            logging.exception(e)
+            responseObject = {
+                'status': 'error',
+                'message': 'Some error occurred. Please try again.'
+            }
+            return make_response(jsonify(responseObject)), 401
+    responseObject = {
+        'status': 'expired',
+        'message': 'Session expired, log in required!'
+    }
+    return make_response(jsonify(responseObject)), 202
 
 @api.route('/edit-profile', methods=['GET', 'POST'])
 def edit_profile():

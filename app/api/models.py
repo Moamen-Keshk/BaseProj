@@ -440,7 +440,8 @@ class Category(db.Model):
     @staticmethod
     def from_json(json_category):
         name = json_category.get('name')
-        return Category(name=name)
+        description = json_category.get('description')
+        return Category(name=name, description=description)
 
 
 class Room(db.Model):
