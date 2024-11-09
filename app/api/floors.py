@@ -32,3 +32,22 @@ def new_floor():
         'message': 'Session expired, log in required!'
     }
     return make_response(jsonify(responseObject)), 202
+
+@api.route('/all-floors')
+def all_floors():
+    resp = get_current_user()
+    if isinstance(resp, str):
+        floors_list = Floor.query.order_by(Floor.id).all()
+        for x in floors_list:
+            floors_list[floors_list.index(x)] = x.to_json()
+        responseObject = {
+            'status': 'success',
+            'data': floors_list,
+            'page': 0
+        }
+        return make_response(jsonify(responseObject)), 201
+    responseObject = {
+        'status': 'fail',
+        'message': resp
+    }
+    return make_response(jsonify(responseObject)), 401

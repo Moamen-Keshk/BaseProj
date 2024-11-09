@@ -10,6 +10,7 @@ from flask_login import UserMixin, AnonymousUserMixin
 from .. import db
 import random
 from .constants import Constants
+import json
 
 
 class Permission:
@@ -510,7 +511,7 @@ class Floor(db.Model):
             'id': self.id,
             'floor_number': self.floor_number,
             'property_id': self.property_id,
-            'rooms': self.rooms
+            'rooms': [room.to_json() for room in self.rooms]
         }
         return json_floor
 
@@ -521,5 +522,5 @@ class Floor(db.Model):
         rooms = json_floor.get('rooms')
         rooms_list = []
         for room in rooms:
-            rooms_list.append(Room.from_json(room))
+            rooms_list.append(Room.from_json(json.loads(room)))
         return Floor(floor_number=floor_number, property_id=property_id, rooms=rooms_list)
