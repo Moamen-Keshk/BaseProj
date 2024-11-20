@@ -524,3 +524,24 @@ class Floor(db.Model):
         for room in rooms:
             rooms_list.append(Room.from_json(json.loads(room)))
         return Floor(floor_number=floor_number, property_id=property_id, rooms=rooms_list)
+
+class PaymentStatus(db.Model):
+    __tablename__ = 'payment_status'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(32), unique=True)
+    name = db.Column(db.String(32), unique=True)
+    color = db.Column(db.String(32), unique=True)
+
+    @staticmethod
+    def insert_status():
+        status = {
+            'Paid': ['PAID', 'Green'],
+            'Unpaid': ['UNPAID', 'Red'],
+            'Suspended': ['SUSPENDED', 'Yellow']
+        }
+        for s in status:
+            stat = PaymentStatus.query.filter_by(name=s).first()
+            if stat is None:
+                stat = PaymentStatus(name=s, code=status[s][0], color=status[s][1])
+            db.session.add(stat)
+        db.session.commit()

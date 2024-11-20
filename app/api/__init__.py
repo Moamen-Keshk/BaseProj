@@ -3,7 +3,7 @@ from flask import Blueprint
 api = Blueprint('api', __name__)
 
 from .models import Permission
-from . import common, floors
+from . import common, floors, bookings
 
 
 @api.app_context_processor

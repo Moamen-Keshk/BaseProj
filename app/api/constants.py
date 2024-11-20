@@ -36,3 +36,23 @@ class Constants:
             2: 'Blocked',
             3: 'Maintain'
     }
+
+    BookingStatusCoding = {
+            'Confirmed': 1,
+            'Completed': 2,
+            'Cancelled': 3,
+        'No show': 4,
+            1: 'Confirmed',
+            2: 'Completed',
+            3: 'Cancelled',
+        4: 'No show'
+    }
+
+    PaymentStatusCoding = {
+            'Paid': 1,
+            'Unpaid': 2,
+            'Suspended': 3,
+            1: 'Paid',
+            2: 'Unpaid',
+            3: 'Suspended'
+    }

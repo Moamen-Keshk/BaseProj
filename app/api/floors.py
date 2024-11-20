@@ -33,11 +33,11 @@ def new_floor():
     }
     return make_response(jsonify(responseObject)), 202
 
-@api.route('/all-floors')
-def all_floors():
+@api.route('/all-floors/<int:property_id>')
+def all_floors(property_id):
     resp = get_current_user()
     if isinstance(resp, str):
-        floors_list = Floor.query.order_by(Floor.id).all()
+        floors_list = Floor.query.filter_by(property_id=property_id).order_by(Floor.floor_number).all()
         for x in floors_list:
             floors_list[floors_list.index(x)] = x.to_json()
         responseObject = {
