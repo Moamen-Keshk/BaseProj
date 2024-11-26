@@ -425,6 +425,7 @@ class Category(db.Model):
     __tablename__ = 'categories'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(32))
+    capacity = db.Column(db.Integer)
     description = db.Column(db.String(64))
 
     def __init__(self, **kwargs):
@@ -434,6 +435,7 @@ class Category(db.Model):
         json_category = {
             'id': self.id,
             'name': self.name,
+            'capacity': self.capacity,
             'description': self.description
         }
         return json_category
@@ -441,14 +443,30 @@ class Category(db.Model):
     @staticmethod
     def from_json(json_category):
         name = json_category.get('name')
+        capacity = json_category.get('capacity')
         description = json_category.get('description')
-        return Category(name=name, description=description)
+        return Category(name=name, capacity=capacity, description=description)
 
+    @staticmethod
+    def insert_categories():
+        cat = {
+            'Single': [1, ''],
+            'Double': [2, ''],
+            'Twin': [2, ''],
+            'Triple': [3, '']
+        }
+        for c in cat:
+            categ = Category.query.filter_by(name=c).first()
+            if categ is None:
+                categ = Category(name=c, capacity=cat[c][0], description=cat[c][1])
+            db.session.add(categ)
+        db.session.commit()
 
 class Room(db.Model):
     __tablename__ = 'rooms'
     id = db.Column(db.Integer, primary_key=True)
     room_number = db.Column(db.Integer)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'))
     floor_id = db.Column(db.Integer, db.ForeignKey('floors.id'))
     status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), default=1)
@@ -460,6 +478,7 @@ class Room(db.Model):
         json_room = {
             'id': self.id,
             'room_number': self.room_number,
+            'property_id': self.property_id,
             'category_id': self.category_id,
             'floor_id': self.floor_id,
             'status_id': self.status_id
@@ -469,10 +488,11 @@ class Room(db.Model):
     @staticmethod
     def from_json(json_room):
         room_number = json_room.get('room_number')
+        property_id = json_room.get('property_id')
         category_id = json_room.get('category_id')
         floor_id = json_room.get('floor_id')
         status_id = json_room.get('status_id')
-        return Room(room_number=room_number, category_id=category_id, floor_id=floor_id, status_id=status_id)
+        return Room(room_number=room_number, property_id=property_id, category_id=category_id, floor_id=floor_id, status_id=status_id)
 
 
 class RoomStatus(db.Model):
@@ -537,11 +557,137 @@ class PaymentStatus(db.Model):
         status = {
             'Paid': ['PAID', 'Green'],
             'Unpaid': ['UNPAID', 'Red'],
-            'Suspended': ['SUSPENDED', 'Yellow']
+            'POA': ['POA', 'Yellow'],
+            'Suspended': ['SUSPENDED', 'Purple']
         }
         for s in status:
             stat = PaymentStatus.query.filter_by(name=s).first()
             if stat is None:
                 stat = PaymentStatus(name=s, code=status[s][0], color=status[s][1])
+            db.session.add(stat)
+        db.session.commit()
+
+    def to_json(self):
+        json_status = {
+            'id': self.id,
+            'code': self.code,
+            'name': self.name,
+            'color': self.color
+        }
+        return json_status
+
+    @staticmethod
+    def from_json(json_status):
+        code = json_status.get('code')
+        name = json_status.get('name')
+        color = json_status.get('color')
+        return PaymentStatus(code=code, name=name, color=color)
+
+class Booking(db.Model):
+    __tablename__ = 'bookings'
+    id = db.Column(db.Integer, primary_key=True)
+    confirmation_number = db.Column(db.Integer, unique=True)
+    first_name = db.Column(db.String(32))
+    last_name = db.Column(db.String(32))
+    number_of_adults = db.Column(db.Integer)
+    number_of_children = db.Column(db.Integer)
+    payment_status_id = db.Column(db.Integer, db.ForeignKey('payment_status.id'), default=1)
+    status_id = db.Column(db.Integer, db.ForeignKey('booking_status.id'), default=1)
+    note = db.Column(db.Text())
+    special_request = db.Column(db.Text())
+    booking_date = db.Column(db.Date(), default=datetime.today().date())
+    check_in = db.Column(db.Date())
+    check_out = db.Column(db.Date())
+    check_in_day = db.Column(db.Integer)
+    check_in_month = db.Column(db.Integer)
+    check_in_year = db.Column(db.Integer)
+    check_out_day = db.Column(db.Integer)
+    check_out_month = db.Column(db.Integer)
+    number_of_days = db.Column(db.Integer)
+    rate = db.Column(db.Double)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
+    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
+    creator_id = db.Column(db.String(32))
+
+    def __init__(self, **kwargs):
+        super(Booking, self).__init__(**kwargs)
+        self.confirmation_number = random.randint(000000, 999999)
+
+    def to_json(self):
+        json_booking = {
+            'id': self.id,
+            'confirmation_number': self.confirmation_number,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'number_of_adults': self.number_of_adults,
+            'number_of_children': self.number_of_children,
+            'payment_status': Constants.PaymentStatusCoding[self.payment_status_id],
+            'status': Constants.BookingStatusCoding[self.status_id],
+            'note': self.note,
+            'special_request': self.special_request,
+            'booking_date': self.booking_date,
+            'check_in': self.check_in,
+            'check_out': self.check_out,
+            'check_in_day': self.check_in_day,
+            'check_in_month': self.check_in_month,
+            'check_in_year': self.check_in_year,
+            'check_out_day': self.check_out_day,
+            'check_out_month': self.check_out_month,
+            'number_of_days': self.number_of_days,
+            'rate': self.rate
+        }
+        return json_booking
+
+    @staticmethod
+    def from_json(json_booking):
+        first_name = json_booking.get('first_name')
+        last_name = json_booking.get('last_name')
+        number_of_adults = json_booking.get('number_of_adults')
+        number_of_children = json_booking.get('number_of_children')
+        payment_status_id = json_booking.get('payment_status_id')
+        note = json_booking.get('note')
+        special_request = json_booking.get('special_request')
+        check_in = json_booking.get('check_in')
+        check_out = json_booking.get('check_out')
+        check_in_day = json_booking.get('check_in_day')
+        check_in_month = json_booking.get('check_in_month')
+        check_in_year = json_booking.get('check_in_year')
+        check_out_day = json_booking.get('check_out_day')
+        check_out_month = json_booking.get('check_out_month')
+        number_of_days = json_booking.get('number_of_days')
+        rate = json_booking.get('rate')
+        property_id = json_booking.get('property_id')
+        room_id = json_booking.get('room_id')
+        return Booking(first_name=first_name, last_name=last_name, number_of_adults=number_of_adults,
+                       number_of_children=number_of_children, payment_status_id=payment_status_id,
+                       note=note, special_request=special_request,
+                       check_in=check_in, check_out=check_out, check_in_day=check_in_day, check_in_month=check_in_month,
+                       check_in_year=check_in_year, check_out_day=check_out_day, check_out_month=check_out_month,
+                       number_of_days=number_of_days, rate=rate, property_id=property_id, room_id=room_id)
+
+    def change_status(self, status_id):
+        self.status_id = status_id
+
+class BookingStatus(db.Model):
+    __tablename__ = 'booking_status'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(32), unique=True)
+    name = db.Column(db.String(32), unique=True)
+    color = db.Column(db.String(32), unique=True)
+
+    @staticmethod
+    def insert_status():
+        status = {
+            'Confirmed': ['CONFIRMED', 'Blue'],
+            'Checked In': ['CHECKED IN', 'Green'],
+            'Checked Out': ['CHECKED OUT', 'Brown'],
+            'Completed': ['COMPLETED', 'Orange'],
+            'Cancelled': ['CANCELLED', 'Red'],
+            'No Show': ['NO SHOW', 'Purple']
+        }
+        for s in status:
+            stat = BookingStatus.query.filter_by(name=s).first()
+            if stat is None:
+                stat = BookingStatus(name=s, code=status[s][0], color=status[s][1])
             db.session.add(stat)
         db.session.commit()

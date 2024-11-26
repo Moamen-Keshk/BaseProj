@@ -5,8 +5,7 @@ import click
 from flask_migrate import Migrate, upgrade
 from app import create_app, db
 from app.api.models import (User, Role, Permission, Notification, OrderStatus,
-                            PropertyStatus, RoomStatus, PaymentStatus)
-from app.api.bookings import (BookingStatus)
+                            PropertyStatus, RoomStatus, PaymentStatus, Category, BookingStatus)
 
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
@@ -91,3 +90,5 @@ def deploy():
     PaymentStatus.insert_status()
 
     BookingStatus.insert_status()
+
+    Category.insert_categories()

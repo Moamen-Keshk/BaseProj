@@ -39,20 +39,37 @@ class Constants:
 
     BookingStatusCoding = {
             'Confirmed': 1,
-            'Completed': 2,
-            'Cancelled': 3,
-        'No show': 4,
+            'Checked In': 2,
+            'Checked Out': 3,
+            'Completed': 4,
+            'Cancelled': 5,
+            'No show': 6,
             1: 'Confirmed',
-            2: 'Completed',
-            3: 'Cancelled',
-        4: 'No show'
+            2: 'Checked In',
+            3: 'Checked Out',
+            4: 'Completed',
+            5: 'Cancelled',
+            6: 'No show'
     }
 
     PaymentStatusCoding = {
             'Paid': 1,
-            'Unpaid': 2,
-            'Suspended': 3,
+            'POA': 2,
+            'Unpaid': 3,
+            'Suspended': 4,
             1: 'Paid',
-            2: 'Unpaid',
-            3: 'Suspended'
+            2: 'POA',
+            3: 'Unpaid',
+            4: 'Suspended'
+    }
+
+    CategoryCoding = {
+            'Single': 1,
+            'Double': 2,
+            'Twin': 3,
+            'Triple': 4,
+            1: 'Single',
+            2: 'Double',
+            3: 'Twin',
+            4: 'Triple'
     }
