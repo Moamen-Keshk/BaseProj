@@ -42,7 +42,8 @@ def all_bookings():
     if isinstance(resp, str):
         bookings_list = Booking.query.filter_by(property_id=int(request.args.get('property_id')),
                                                 check_in_year=int(request.args.get('check_in_year')),
-                                                check_in_month=int(request.args.get('check_in_month'))).all()
+                                                check_in_month=int(request.args.get('check_in_month'))
+                                                ).order_by(Booking.check_in_day).all()
         for x in bookings_list:
             bookings_list[bookings_list.index(x)] = x.to_json()
         responseObject = {

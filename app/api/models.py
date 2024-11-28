@@ -634,7 +634,8 @@ class Booking(db.Model):
             'check_out_day': self.check_out_day,
             'check_out_month': self.check_out_month,
             'number_of_days': self.number_of_days,
-            'rate': self.rate
+            'rate': self.rate,
+            'room_id': self.room_id
         }
         return json_booking
 
