@@ -48,7 +48,7 @@ def all_bookings():
         bookings_list = session.query(Booking).filter(
             and_(
                 Booking.property_id == int(request.args.get('property_id')),
-                Booking.check_in_year == int(request.args.get('check_in_year')),
+                or_(Booking.check_in_year == int(request.args.get('check_in_year')), Booking.check_out_year == int(request.args.get('check_in_year'))),
                 or_(
                     and_(Booking.check_in_month == int(request.args.get('check_in_month')),
                          Booking.check_out_month == int(request.args.get('check_in_month'))),

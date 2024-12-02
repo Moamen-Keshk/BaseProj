@@ -603,6 +603,7 @@ class Booking(db.Model):
     check_in_year = db.Column(db.Integer)
     check_out_day = db.Column(db.Integer)
     check_out_month = db.Column(db.Integer)
+    check_out_year = db.Column(db.Integer)
     number_of_days = db.Column(db.Integer)
     rate = db.Column(db.Double)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
@@ -633,6 +634,7 @@ class Booking(db.Model):
             'check_in_year': self.check_in_year,
             'check_out_day': self.check_out_day,
             'check_out_month': self.check_out_month,
+            'check_out_year': self.check_out_year,
             'number_of_days': self.number_of_days,
             'rate': self.rate,
             'room_id': self.room_id
@@ -655,6 +657,7 @@ class Booking(db.Model):
         check_in_year = json_booking.get('check_in_year')
         check_out_day = json_booking.get('check_out_day')
         check_out_month = json_booking.get('check_out_month')
+        check_out_year = json_booking.get('check_out_year')
         number_of_days = json_booking.get('number_of_days')
         rate = json_booking.get('rate')
         property_id = json_booking.get('property_id')
