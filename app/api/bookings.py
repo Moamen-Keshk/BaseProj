@@ -1,12 +1,17 @@
 from flask import request, make_response, jsonify
-from sqlalchemy.orm import session
-
+from sqlalchemy import or_, and_
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
 from . import api
 import logging
 from .models import Booking
-from sqlalchemy import extract
 from .. import db
 from app.auth.views import get_current_user
+import os
+
+engine = create_engine(os.environ.get('DEV_DATABASE_URL'))
+Session = sessionmaker(bind=engine)
+session = Session()
 
 @api.route('/new_booking', methods=['POST'])
 def new_booking():
@@ -40,10 +45,20 @@ def new_booking():
 def all_bookings():
     resp = get_current_user()
     if isinstance(resp, str):
-        bookings_list = Booking.query.filter_by(property_id=int(request.args.get('property_id')),
-                                                check_in_year=int(request.args.get('check_in_year')),
-                                                check_in_month=int(request.args.get('check_in_month'))
-                                                ).order_by(Booking.check_in_day).all()
+        bookings_list = session.query(Booking).filter(
+            and_(
+                Booking.property_id == int(request.args.get('property_id')),
+                Booking.check_in_year == int(request.args.get('check_in_year')),
+                or_(
+                    and_(Booking.check_in_month == int(request.args.get('check_in_month')),
+                         Booking.check_out_month == int(request.args.get('check_in_month'))),
+                    and_(Booking.check_in_month != int(request.args.get('check_in_month')),
+                         Booking.check_out_month == int(request.args.get('check_in_month'))),
+                    and_(Booking.check_in_month == int(request.args.get('check_in_month')),
+                         Booking.check_out_month != int(request.args.get('check_in_month')))
+                )
+            )
+        ).order_by(Booking.check_in_day).all()
         for x in bookings_list:
             bookings_list[bookings_list.index(x)] = x.to_json()
         responseObject = {
