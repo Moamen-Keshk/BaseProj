@@ -59,6 +59,7 @@ def all_bookings():
                 )
             )
         ).order_by(Booking.check_in_day).all()
+        session.close()
         for x in bookings_list:
             bookings_list[bookings_list.index(x)] = x.to_json()
         responseObject = {

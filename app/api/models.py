@@ -622,7 +622,7 @@ class Booking(db.Model):
             'last_name': self.last_name,
             'number_of_adults': self.number_of_adults,
             'number_of_children': self.number_of_children,
-            'payment_status': Constants.PaymentStatusCoding[self.payment_status_id],
+            'payment_status': self.payment_status_id,
             'status': Constants.BookingStatusCoding[self.status_id],
             'note': self.note,
             'special_request': self.special_request,
@@ -664,9 +664,9 @@ class Booking(db.Model):
         room_id = json_booking.get('room_id')
         return Booking(first_name=first_name, last_name=last_name, number_of_adults=number_of_adults,
                        number_of_children=number_of_children, payment_status_id=payment_status_id,
-                       note=note, special_request=special_request,
-                       check_in=check_in, check_out=check_out, check_in_day=check_in_day, check_in_month=check_in_month,
-                       check_in_year=check_in_year, check_out_day=check_out_day, check_out_month=check_out_month,
+                       note=note, special_request=special_request, check_in=check_in, check_out=check_out,
+                       check_in_day=check_in_day, check_in_month=check_in_month, check_in_year=check_in_year,
+                       check_out_day=check_out_day, check_out_month=check_out_month, check_out_year=check_out_year,
                        number_of_days=number_of_days, rate=rate, property_id=property_id, room_id=room_id)
 
     def change_status(self, status_id):
