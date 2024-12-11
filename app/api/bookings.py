@@ -149,7 +149,7 @@ def all_bookings():
                          Booking.check_out_month != check_in_month)
                 )
             )
-        ).order_by(Booking.check_in_day).all()
+        ).order_by(Booking.check_in_year, Booking.check_in_month, Booking.check_in_day).all()
 
         response_data = [booking.to_json() for booking in bookings]
 
