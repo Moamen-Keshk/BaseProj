@@ -1,23 +1,22 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import Room
 from .. import db
+from .models import Category
 from app.auth.views import get_current_user
 
-
-@api.route('/new-room', methods=['POST'])
-def new_room():
+@api.route('/new-category', methods=['POST'])
+def new_category():
     resp = get_current_user()
     if isinstance(resp, str):
         try:
-            room = Room.from_json(dict(request.json))
-            db.session.add(room)
+            category_new = Category.from_json(dict(request.json))
+            db.session.add(category_new)
             db.session.flush()
             db.session.commit()
             responseObject = {
                 'status': 'success',
-                'message': 'Room added successfully.'
+                'message': 'Category added.'
             }
             return make_response(jsonify(responseObject)), 201
         except Exception as e:
@@ -33,8 +32,8 @@ def new_room():
     }
     return make_response(jsonify(responseObject)), 202
 
-@api.route('/edit_room/<int:room_id>', methods=['PUT'])
-def edit_room(room_id):
+@api.route('/edit_category/<int:category_id>', methods=['PUT'])
+def edit_category(category_id):
     try:
         # Get the current user ID and ensure they are authorized
         user_id = get_current_user()
@@ -45,27 +44,23 @@ def edit_room(room_id):
             })), 401
 
         # Fetch the booking data from the request
-        room_data = request.get_json()
+        category_data = request.get_json()
 
         # Find the booking by ID
-        room = db.session.query(Room).filter_by(id=room_id, creator_id=user_id).first()
-        if not room:
+        category = db.session.query(Category).filter_by(id=category_id, creator_id=user_id).first()
+        if not category:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Room not found or you do not have permission to edit it.'
+                'message': 'Category not found or you do not have permission to edit it.'
             })), 404
 
         # Update booking fields
-        if 'room_number' in room_data:
-            room.room_number = room_data['room_number']
-        if 'property_id' in room_data:
-            room.property_id = room_data['property_id']
-        if 'category_id' in room_data:
-            room.category_id = room_data['category_id']
-        if 'floor_id' in room_data:
-            room.floor_id = room_data['floor_id']
-        if 'status_id' in room_data:
-            room.status_id = room_data['status_id']
+        if 'name' in category_data:
+            category.name = category_data['name']
+        if 'capacity' in category_data:
+            category.capacity = category_data['capacity']
+        if 'description' in category_data:
+            category.description = category_data['description']
 
         # Additional fields can be updated here
         # ...
@@ -75,26 +70,25 @@ def edit_room(room_id):
 
         return make_response(jsonify({
             'status': 'success',
-            'message': 'Room updated successfully.'
+            'message': 'Category updated successfully.'
         })), 201
-
     except Exception as e:
-        logging.exception("Error in edit_room: %s", str(e))
+        logging.exception("Error in edit_category: %s", str(e))
         return make_response(jsonify({
             'status': 'error',
-            'message': 'Failed to update room. Please try again.'
+            'message': 'Failed to update category. Please try again.'
         })), 500
 
-@api.route('/all-rooms/<int:property_id>')
-def all_rooms(property_id):
+@api.route('/all-categories')
+def all_categories():
     resp = get_current_user()
     if isinstance(resp, str):
-        rooms_list = Room.query.filter_by(property_id=property_id).order_by(Room.room_number).all()
-        for x in rooms_list:
-            rooms_list[rooms_list.index(x)] = x.to_json()
+        categories_list = Category.query.order_by(Category.id).all()
+        for x in categories_list:
+            categories_list[categories_list.index(x)] = x.to_json()
         responseObject = {
             'status': 'success',
-            'data': rooms_list,
+            'data': categories_list,
             'page': 0
         }
         return make_response(jsonify(responseObject)), 201

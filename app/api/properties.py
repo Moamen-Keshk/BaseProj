@@ -1,23 +1,22 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import Room
+from .models import Property
 from .. import db
 from app.auth.views import get_current_user
 
-
-@api.route('/new-room', methods=['POST'])
-def new_room():
+@api.route('/new_property', methods=['POST'])
+def new_property():
     resp = get_current_user()
     if isinstance(resp, str):
         try:
-            room = Room.from_json(dict(request.json))
-            db.session.add(room)
+            property_new = Property.from_json(dict(request.json))
+            db.session.add(property_new)
             db.session.flush()
             db.session.commit()
             responseObject = {
                 'status': 'success',
-                'message': 'Room added successfully.'
+                'message': 'Property submitted.'
             }
             return make_response(jsonify(responseObject)), 201
         except Exception as e:
@@ -33,8 +32,8 @@ def new_room():
     }
     return make_response(jsonify(responseObject)), 202
 
-@api.route('/edit_room/<int:room_id>', methods=['PUT'])
-def edit_room(room_id):
+@api.route('/edit_property/<int:property_id>', methods=['PUT'])
+def edit_property(property_id):
     try:
         # Get the current user ID and ensure they are authorized
         user_id = get_current_user()
@@ -45,27 +44,23 @@ def edit_room(room_id):
             })), 401
 
         # Fetch the booking data from the request
-        room_data = request.get_json()
+        property_data = request.get_json()
 
         # Find the booking by ID
-        room = db.session.query(Room).filter_by(id=room_id, creator_id=user_id).first()
-        if not room:
+        property_to_edit = db.session.query(Property).filter_by(id=property_id, creator_id=user_id).first()
+        if not property_to_edit:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Room not found or you do not have permission to edit it.'
+                'message': 'Booking not found or you do not have permission to edit it.'
             })), 404
 
         # Update booking fields
-        if 'room_number' in room_data:
-            room.room_number = room_data['room_number']
-        if 'property_id' in room_data:
-            room.property_id = room_data['property_id']
-        if 'category_id' in room_data:
-            room.category_id = room_data['category_id']
-        if 'floor_id' in room_data:
-            room.floor_id = room_data['floor_id']
-        if 'status_id' in room_data:
-            room.status_id = room_data['status_id']
+        if 'name' in property_data:
+            property_to_edit.name = property_data['name']
+        if 'address' in property_data:
+            property_to_edit.address = property_data['address']
+        if 'status_id' in property_data:
+            property_to_edit.status_id = property_data['status_id']
 
         # Additional fields can be updated here
         # ...
@@ -75,26 +70,26 @@ def edit_room(room_id):
 
         return make_response(jsonify({
             'status': 'success',
-            'message': 'Room updated successfully.'
+            'message': 'Floor updated successfully.'
         })), 201
 
     except Exception as e:
-        logging.exception("Error in edit_room: %s", str(e))
+        logging.exception("Error in edit_floor: %s", str(e))
         return make_response(jsonify({
             'status': 'error',
-            'message': 'Failed to update room. Please try again.'
+            'message': 'Failed to update floor. Please try again.'
         })), 500
 
-@api.route('/all-rooms/<int:property_id>')
-def all_rooms(property_id):
+@api.route('/all-properties')
+def all_properties():
     resp = get_current_user()
     if isinstance(resp, str):
-        rooms_list = Room.query.filter_by(property_id=property_id).order_by(Room.room_number).all()
-        for x in rooms_list:
-            rooms_list[rooms_list.index(x)] = x.to_json()
+        properties_list = Property.query.order_by(Property.published_date).all()
+        for x in properties_list:
+            properties_list[properties_list.index(x)] = x.to_json()
         responseObject = {
             'status': 'success',
-            'data': rooms_list,
+            'data': properties_list,
             'page': 0
         }
         return make_response(jsonify(responseObject)), 201
