@@ -103,3 +103,36 @@ def all_rooms(property_id):
         'message': resp
     }
     return make_response(jsonify(responseObject)), 401
+
+@api.route('/delete_room/<int:room_id>', methods=['DELETE'])
+def delete_room(room_id):
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        # Check if room exists and belongs to the user
+        room = db.session.query(Room).filter_by(id=room_id).first()
+        if not room:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Room not found or you do not have permission to delete it.'
+            })), 404
+
+        db.session.delete(room)
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Room deleted successfully.'
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in delete_room: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete room. Please try again.'
+        })), 500

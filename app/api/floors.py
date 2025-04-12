@@ -114,3 +114,35 @@ def all_floors(property_id):
         'message': resp
     }
     return make_response(jsonify(responseObject)), 401
+
+@api.route('/delete_floor/<int:floor_id>', methods=['DELETE'])
+def delete_floor(floor_id):
+    try:
+        user = get_current_user()
+        if not isinstance(user, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        floor = Floor.query.get(floor_id)
+        if not floor:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Floor not found.'
+            })), 404
+
+        db.session.delete(floor)
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Floor deleted successfully.'
+        })), 201
+
+    except Exception as e:
+        logging.exception("An error occurred: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete floor. Please try again.'
+        })), 500
