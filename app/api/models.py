@@ -702,6 +702,7 @@ class RatePlan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     base_rate = db.Column(db.Float, nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
@@ -717,6 +718,7 @@ class RatePlan(db.Model):
             'id': self.id,
             'name': self.name,
             'base_rate': self.base_rate,
+            'property_id': self.property_id,
             'category_id': self.category_id,
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'end_date': self.end_date.isoformat() if self.end_date else None,
@@ -729,6 +731,7 @@ class RatePlan(db.Model):
     def from_json(json_data):
         name = json_data.get('name')
         base_rate = json_data.get('base_rate')
+        property_id = json_data.get('property_id')
         category_id = json_data.get('category_id')
         start_date = datetime.fromisoformat(json_data.get('start_date')).date()
         end_date = datetime.fromisoformat(json_data.get('end_date')).date()
@@ -740,6 +743,7 @@ class RatePlan(db.Model):
             name=name,
             base_rate=base_rate,
             category_id=category_id,
+            property_id=property_id,
             start_date=start_date,
             end_date=end_date,
             weekend_rate=weekend_rate,
