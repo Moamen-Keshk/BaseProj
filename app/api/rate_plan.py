@@ -130,6 +130,37 @@ def all_rate_plans(property_id):
         'message': resp
     })), 401
 
+@api.route('/rate_plan/<int:rate_plan_id>', methods=['GET'])
+def get_rate_plan_by_id(rate_plan_id):
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id).first()
+
+        if not rate_plan:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Rate Plan not found.'
+            })), 404
+
+        return make_response(jsonify({
+            'status': 'success',
+            'data': rate_plan.to_json()
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in get_rate_plan_by_id: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch rate plan.'
+        })), 500
+
+
 
 @api.route('/delete_rate_plan/<int:rate_plan_id>', methods=['DELETE'])
 def delete_rate_plan(rate_plan_id):
