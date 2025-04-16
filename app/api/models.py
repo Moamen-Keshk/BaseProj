@@ -750,3 +750,37 @@ class RatePlan(db.Model):
             seasonal_multiplier=seasonal_multiplier,
             is_active=is_active
         )
+
+class Season(db.Model):
+    __tablename__ = 'seasons'
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    label = db.Column(db.String(64), nullable=True)
+
+    def __init__(self, **kwargs):
+        super(Season, self).__init__(**kwargs)
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
+            'label': self.label
+        }
+
+    @staticmethod
+    def from_json(json_data):
+        property_id = json_data.get('property_id')
+        start_date = datetime.fromisoformat(json_data.get('start_date')).date()
+        end_date = datetime.fromisoformat(json_data.get('end_date')).date()
+        label = json_data.get('label')
+
+        return Season(
+            property_id=property_id,
+            start_date=start_date,
+            end_date=end_date,
+            label=label
+        )

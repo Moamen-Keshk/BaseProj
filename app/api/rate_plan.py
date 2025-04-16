@@ -90,7 +90,7 @@ def get_rate_plans(property_id, category_id):
     resp = get_current_user()
     if isinstance(resp, str):
         rate_plans = RatePlan.query.filter(
-            RatePlan.property_id == property_id & RatePlan.property_id == category_id
+            RatePlan.property_id == property_id & RatePlan.category_id == category_id
         ).order_by(RatePlan.start_date).all()
 
         data = [plan.to_json() for plan in rate_plans]
