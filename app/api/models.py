@@ -784,3 +784,41 @@ class Season(db.Model):
             end_date=end_date,
             label=label
         )
+
+class RoomRate(db.Model):
+    __tablename__ = 'room_rates'
+    __table_args__ = (
+        db.UniqueConstraint('room_id', 'date', name='unique_room_rate_per_day'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+
+    def __init__(self, **kwargs):
+        super(RoomRate, self).__init__(**kwargs)
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'room_id': self.room_id,
+            'property_id': self.property_id,
+            'category_id': self.category_id,  # ✅ Include in output
+            'date': self.date.isoformat(),
+            'price': self.price
+        }
+
+    @staticmethod
+    def from_json(json_data):
+        return RoomRate(
+            room_id=json_data.get('room_id'),
+            property_id=json_data.get('property_id'),
+            category_id=json_data.get('category_id'),  # ✅ Parse input
+            date=datetime.fromisoformat(json_data.get('date')).date(),
+            price=json_data.get('price')
+        )
+
+

@@ -163,3 +163,36 @@ def all_bookings():
             'status': 'error',
             'message': 'Failed to fetch bookings.'
         })), 500
+
+@api.route('/delete_booking/<int:booking_id>', methods=['DELETE'])
+def delete_booking(booking_id):
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        booking = db.session.query(Booking).filter_by(id=booking_id).first()
+
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found or permission denied.'
+            })), 404
+
+        db.session.delete(booking)
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Booking deleted successfully.'
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in delete_booking: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete booking. Please try again.'
+        })), 500
