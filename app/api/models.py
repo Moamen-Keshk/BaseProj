@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 import hashlib
 import logging
 from itsdangerous import (URLSafeTimedSerializer
@@ -6,11 +6,21 @@ from itsdangerous import (URLSafeTimedSerializer
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app, url_for
 from flask_login import UserMixin, AnonymousUserMixin
+from sqlalchemy.orm import validates
 
 from .. import db
 import random
 from .constants import Constants
 import json
+
+def parse_date(value):
+    if isinstance(value, str):
+        return datetime.fromisoformat(value).date()
+    elif isinstance(value, (list, tuple)) and len(value) == 3:
+        return date(*value)
+    elif isinstance(value, date):
+        return value
+    return None
 
 
 class Permission:
@@ -612,7 +622,14 @@ class Booking(db.Model):
 
     def __init__(self, **kwargs):
         super(Booking, self).__init__(**kwargs)
-        self.confirmation_number = random.randint(000000, 999999)
+        self.confirmation_number = self.generate_confirmation_number()
+
+    @staticmethod
+    def generate_confirmation_number():
+        while True:
+            number = random.randint(100000, 999999)
+            if not Booking.query.filter_by(confirmation_number=number).first():
+                return number
 
     def to_json(self):
         json_booking = {
@@ -822,5 +839,95 @@ class RoomOnline(db.Model):
             date=datetime.fromisoformat(json_data.get('date')).date(),
             price=json_data.get('price')
         )
+
+class Block(db.Model):
+    __tablename__ = 'blocks'
+    id = db.Column(db.Integer, primary_key=True)
+    note = db.Column(db.Text())
+    block_date = db.Column(db.Date(), default=datetime.today().date())
+
+    start_date = db.Column(db.Date(), nullable=False)
+    end_date = db.Column(db.Date(), nullable=False)
+    start_day = db.Column(db.Integer)
+    start_month = db.Column(db.Integer)
+    start_year = db.Column(db.Integer)
+    end_day = db.Column(db.Integer)
+    end_month = db.Column(db.Integer)
+    end_year = db.Column(db.Integer)
+    number_of_days = db.Column(db.Integer)
+
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), nullable=False)
+
+    @validates('start_date', 'end_date')
+    def validate_dates(self, key, value):
+        if key == 'end_date' and self.start_date and value <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return value
+
+    def calculate_fields(self):
+        """Call this after setting start_date and end_date"""
+        if self.start_date and self.end_date:
+            self.number_of_days = (self.end_date - self.start_date).days
+            self.start_day = self.start_date.day
+            self.start_month = self.start_date.month
+            self.start_year = self.start_date.year
+            self.end_day = self.end_date.day
+            self.end_month = self.end_date.month
+            self.end_year = self.end_date.year
+
+    def overlaps_existing_block_or_booking(self):
+        """Check for overlap with other blocks or bookings for the same room"""
+        overlapping_blocks = Block.query.filter(
+            Block.room_id == self.room_id,
+            Block.id != self.id,
+            Block.start_date < self.end_date,
+            Block.end_date > self.start_date
+        ).first()
+
+        overlapping_bookings = Booking.query.filter(
+            Booking.room_id == self.room_id,
+            Booking.check_in < self.end_date,
+            Booking.check_out > self.start_date
+        ).first()
+
+        return overlapping_blocks or overlapping_bookings
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'note': self.note,
+            'block_date': self.block_date,
+            'start_date': self.start_date,
+            'end_date': self.end_date,
+            'start_day': self.start_day,
+            'start_month': self.start_month,
+            'start_year': self.start_year,
+            'end_day': self.end_day,
+            'end_month': self.end_month,
+            'end_year': self.end_year,
+            'number_of_days': self.number_of_days,
+            'property_id': self.property_id,
+            'room_id': self.room_id,
+        }
+
+    @staticmethod
+    def from_json(json_block):
+        start_date = parse_date(json_block.get('start_date'))
+        end_date = parse_date(json_block.get('end_date'))
+        block_date = parse_date(json_block.get('block_date'))
+
+        block = Block(
+            note=json_block.get('note'),
+            block_date=block_date,
+            start_date=start_date,
+            end_date=end_date,
+            property_id=json_block.get('property_id'),
+            room_id=json_block.get('room_id'),
+        )
+        block.calculate_fields()
+        if block.overlaps_existing_block_or_booking():
+            raise ValueError("Block overlaps with an existing block or booking.")
+        return block
 
 
