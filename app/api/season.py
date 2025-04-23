@@ -1,9 +1,10 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import Season
+from .models import Season, RatePlan, RoomOnline
 from .. import db
 from app.auth.views import get_current_user
+from app.api.utils.room_online_generator import update_room_online_for_season
 
 
 @api.route('/new_season', methods=['POST'])
@@ -16,6 +17,7 @@ def new_season():
         season = Season.from_json(request.json)
         db.session.add(season)
         db.session.commit()
+        update_room_online_for_season(season)
         return _success_response('Season added successfully.', 201)
     except Exception as e:
         logging.exception("Error adding season: %s", e)
@@ -47,6 +49,7 @@ def update_season(season_id):
             season.label = data['label']
 
         db.session.commit()
+        update_room_online_for_season(season)
         return _success_response('Season updated successfully.', 201)
 
     except Exception as e:
@@ -77,22 +80,68 @@ def all_seasons(property_id):
 
 @api.route('/delete_season/<int:season_id>', methods=['DELETE'])
 def delete_season(season_id):
-    user = get_current_user()
-    if not isinstance(user, str):
-        return _unauthorized_response()
-
     try:
-        season = Season.query.get(season_id)
-        if not season:
-            return _not_found_response('Season not found.')
+        user = get_current_user()
+        if not isinstance(user, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
 
+        season = db.session.query(Season).filter_by(id=season_id).first()
+        if not season:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Season not found.'
+            })), 404
+
+        # Store values before deletion
+        property_id = season.property_id
+        start_date = season.start_date
+        end_date = season.end_date
+
+        # Delete the season
         db.session.delete(season)
+        db.session.flush()  # Don't commit yet
+
+        # Recalculate room_online prices for affected entries
+        affected_room_online = RoomOnline.query.filter(
+            RoomOnline.property_id == property_id,
+            RoomOnline.date >= start_date,
+            RoomOnline.date <= end_date
+        ).all()
+
+        for entry in affected_room_online:
+            matching_plan = RatePlan.query.filter(
+                RatePlan.property_id == entry.property_id,
+                RatePlan.category_id == entry.category_id,
+                RatePlan.start_date <= entry.date,
+                RatePlan.end_date >= entry.date
+            ).first()
+
+            if matching_plan:
+                is_weekend = entry.date.weekday() in [5, 6]
+                new_price = (
+                    matching_plan.weekend_rate
+                    if is_weekend and matching_plan.weekend_rate is not None
+                    else matching_plan.base_rate
+                )
+                entry.price = new_price  # ✅ Remove seasonal multiplier
+
         db.session.commit()
-        return _success_response('Season deleted successfully.', 201)
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Season deleted and affected room rates reverted.'
+        })), 201
 
     except Exception as e:
-        logging.exception("Error deleting season: %s", e)
-        return _error_response('Failed to delete season.', 500)
+        logging.exception("Error in delete_season: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete season. Please try again.'
+        })), 500
+
 
 
 # Helper Responses

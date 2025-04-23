@@ -505,9 +505,9 @@ class RoomStatus(db.Model):
     @staticmethod
     def insert_status():
         status = {
-            'Open': ['OPEN', 'Green'],
-            'Blocked': ['BLOCKED', 'red'],
-            'Maintain': ['MAINTAIN', 'yellow']
+            'Available': ['AVAILABLE', 'blue'],
+            'Booked': ['BOOKED', 'green'],
+            'Blocked': ['BLOCKED', 'red']
         }
         for s in status:
             stat = RoomStatus.query.filter_by(name=s).first()
@@ -785,10 +785,10 @@ class Season(db.Model):
             label=label
         )
 
-class RoomRate(db.Model):
-    __tablename__ = 'room_rates'
+class RoomOnline(db.Model):
+    __tablename__ = 'room_online'
     __table_args__ = (
-        db.UniqueConstraint('room_id', 'date', name='unique_room_rate_per_day'),
+        db.UniqueConstraint('room_id', 'date', name='unique_room_online_per_day'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -797,9 +797,10 @@ class RoomRate(db.Model):
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
     date = db.Column(db.Date, nullable=False)
     price = db.Column(db.Float, nullable=False)
+    room_status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), nullable=False, default=1)
 
     def __init__(self, **kwargs):
-        super(RoomRate, self).__init__(**kwargs)
+        super(RoomOnline, self).__init__(**kwargs)
 
     def to_json(self):
         return {
@@ -808,12 +809,13 @@ class RoomRate(db.Model):
             'property_id': self.property_id,
             'category_id': self.category_id,  # ✅ Include in output
             'date': self.date.isoformat(),
-            'price': self.price
+            'price': self.price,
+            'room_status_id': self.room_status_id
         }
 
     @staticmethod
     def from_json(json_data):
-        return RoomRate(
+        return RoomOnline(
             room_id=json_data.get('room_id'),
             property_id=json_data.get('property_id'),
             category_id=json_data.get('category_id'),  # ✅ Parse input

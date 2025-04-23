@@ -1,10 +1,11 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import RatePlan
+from .models import RatePlan, RoomOnline
 from .. import db
 from app.auth.views import get_current_user
 from datetime import datetime
+from app.api.utils.room_online_generator import generate_or_update_room_online_for_rate_plan
 
 @api.route('/new_rate_plan', methods=['POST'])
 def new_rate_plan():
@@ -15,6 +16,7 @@ def new_rate_plan():
             db.session.add(rate_plan)
             db.session.flush()
             db.session.commit()
+            generate_or_update_room_online_for_rate_plan(rate_plan)
             responseObject = {
                 'status': 'success',
                 'message': 'Rate Plan added successfully.'
@@ -71,6 +73,7 @@ def edit_rate_plan(rate_plan_id):
             rate_plan.is_active = rate_data['is_active']
 
         db.session.commit()
+        generate_or_update_room_online_for_rate_plan(rate_plan)
 
         return make_response(jsonify({
             'status': 'success',
@@ -161,7 +164,6 @@ def get_rate_plan_by_id(rate_plan_id):
         })), 500
 
 
-
 @api.route('/delete_rate_plan/<int:rate_plan_id>', methods=['DELETE'])
 def delete_rate_plan(rate_plan_id):
     try:
@@ -179,12 +181,21 @@ def delete_rate_plan(rate_plan_id):
                 'message': 'Rate Plan not found.'
             })), 404
 
+        # 🧹 Step 1: Delete RoomOnline entries linked to this rate plan
+        RoomOnline.query.filter(
+            RoomOnline.property_id == rate_plan.property_id,
+            RoomOnline.category_id == rate_plan.category_id,
+            RoomOnline.date >= rate_plan.start_date,
+            RoomOnline.date <= rate_plan.end_date
+        ).delete(synchronize_session=False)
+
+        # 🧹 Step 2: Delete the rate plan itself
         db.session.delete(rate_plan)
         db.session.commit()
 
         return make_response(jsonify({
             'status': 'success',
-            'message': 'Rate Plan deleted successfully.'
+            'message': 'Rate Plan and linked RoomOnline entries deleted successfully.'
         })), 201
 
     except Exception as e:
@@ -193,3 +204,4 @@ def delete_rate_plan(rate_plan_id):
             'status': 'error',
             'message': 'Failed to delete rate plan. Please try again.'
         })), 500
+
