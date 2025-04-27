@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app, url_for
 from flask_login import UserMixin, AnonymousUserMixin
 from sqlalchemy.orm import validates
+from sqlalchemy.sql import func
 
 from .. import db
 import random
@@ -605,7 +606,7 @@ class Booking(db.Model):
     status_id = db.Column(db.Integer, db.ForeignKey('booking_status.id'), default=1)
     note = db.Column(db.Text())
     special_request = db.Column(db.Text())
-    booking_date = db.Column(db.Date(), default=datetime.today().date())
+    booking_date = db.Column(db.Date(), default=func.current_date())
     check_in = db.Column(db.Date())
     check_out = db.Column(db.Date())
     check_in_day = db.Column(db.Integer)
@@ -615,10 +616,16 @@ class Booking(db.Model):
     check_out_month = db.Column(db.Integer)
     check_out_year = db.Column(db.Integer)
     number_of_days = db.Column(db.Integer)
-    rate = db.Column(db.Double)
+    rate = db.Column(db.Float)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
     creator_id = db.Column(db.String(32))
+
+    booking_rates = db.relationship(
+        'BookingRate',
+        cascade='all, delete-orphan',
+        back_populates='booking'
+    )
 
     def __init__(self, **kwargs):
         super(Booking, self).__init__(**kwargs)
@@ -632,20 +639,20 @@ class Booking(db.Model):
                 return number
 
     def to_json(self):
-        json_booking = {
+        return {
             'id': self.id,
             'confirmation_number': self.confirmation_number,
             'first_name': self.first_name,
             'last_name': self.last_name,
             'number_of_adults': self.number_of_adults,
             'number_of_children': self.number_of_children,
-            'payment_status': self.payment_status_id,
-            'status': Constants.BookingStatusCoding[self.status_id],
+            'payment_status_id': self.payment_status_id,
+            'status_id': self.status_id,
             'note': self.note,
             'special_request': self.special_request,
-            'booking_date': self.booking_date,
-            'check_in': self.check_in,
-            'check_out': self.check_out,
+            'booking_date': self.booking_date.isoformat() if self.booking_date else None,
+            'check_in': self.check_in.isoformat() if self.check_in else None,
+            'check_out': self.check_out.isoformat() if self.check_out else None,
             'check_in_day': self.check_in_day,
             'check_in_month': self.check_in_month,
             'check_in_year': self.check_in_year,
@@ -654,40 +661,89 @@ class Booking(db.Model):
             'check_out_year': self.check_out_year,
             'number_of_days': self.number_of_days,
             'rate': self.rate,
-            'room_id': self.room_id
+            'property_id': self.property_id,
+            'room_id': self.room_id,
+            'creator_id': self.creator_id,
+            'booking_rates': [br.to_json() for br in self.booking_rates]
         }
-        return json_booking
 
     @staticmethod
     def from_json(json_booking):
-        first_name = json_booking.get('first_name')
-        last_name = json_booking.get('last_name')
-        number_of_adults = json_booking.get('number_of_adults')
-        number_of_children = json_booking.get('number_of_children')
-        payment_status_id = json_booking.get('payment_status_id')
-        note = json_booking.get('note')
-        special_request = json_booking.get('special_request')
-        check_in = json_booking.get('check_in')
-        check_out = json_booking.get('check_out')
-        check_in_day = json_booking.get('check_in_day')
-        check_in_month = json_booking.get('check_in_month')
-        check_in_year = json_booking.get('check_in_year')
-        check_out_day = json_booking.get('check_out_day')
-        check_out_month = json_booking.get('check_out_month')
-        check_out_year = json_booking.get('check_out_year')
-        number_of_days = json_booking.get('number_of_days')
-        rate = json_booking.get('rate')
-        property_id = json_booking.get('property_id')
-        room_id = json_booking.get('room_id')
-        return Booking(first_name=first_name, last_name=last_name, number_of_adults=number_of_adults,
-                       number_of_children=number_of_children, payment_status_id=payment_status_id,
-                       note=note, special_request=special_request, check_in=check_in, check_out=check_out,
-                       check_in_day=check_in_day, check_in_month=check_in_month, check_in_year=check_in_year,
-                       check_out_day=check_out_day, check_out_month=check_out_month, check_out_year=check_out_year,
-                       number_of_days=number_of_days, rate=rate, property_id=property_id, room_id=room_id)
+        from werkzeug.http import parse_date
+
+        def parse_dates(key):
+            val = json_booking.get(key)
+            if not val:
+                raise ValueError(f"Missing date for field {key}")
+            try:
+                # First, try to parse ISO8601 "yyyy-mm-dd"
+                return datetime.strptime(val, "%Y-%m-%d").date()
+            except ValueError:
+                # Fall back to werkzeug parse_date (which handles RFC 2822, ISO full datetime)
+                parsed = parse_date(val)
+                if not parsed:
+                    raise ValueError(f"Invalid date format for field {key}: {val}")
+                return parsed.date()
+
+        return Booking(
+            first_name=json_booking.get('first_name'),
+            last_name=json_booking.get('last_name'),
+            number_of_adults=json_booking.get('number_of_adults'),
+            number_of_children=json_booking.get('number_of_children'),
+            payment_status_id=json_booking.get('payment_status_id'),
+            status_id=json_booking.get('status_id'),
+            note=json_booking.get('note'),
+            special_request=json_booking.get('special_request'),
+            check_in=parse_dates('check_in'),
+            check_out=parse_dates('check_out'),
+            check_in_day=json_booking.get('check_in_day'),
+            check_in_month=json_booking.get('check_in_month'),
+            check_in_year=json_booking.get('check_in_year'),
+            check_out_day=json_booking.get('check_out_day'),
+            check_out_month=json_booking.get('check_out_month'),
+            check_out_year=json_booking.get('check_out_year'),
+            number_of_days=json_booking.get('number_of_days'),
+            rate=json_booking.get('rate'),
+            property_id=json_booking.get('property_id'),
+            room_id=json_booking.get('room_id'),
+            creator_id=json_booking.get('creator_id'),
+        )
 
     def change_status(self, status_id):
         self.status_id = status_id
+
+
+class BookingRate(db.Model):
+    __tablename__ = 'booking_rates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=False)
+    rate_date = db.Column(db.Date, nullable=False)
+    nightly_rate = db.Column(db.Float, nullable=False)
+
+    booking = db.relationship('Booking', back_populates='booking_rates')
+
+    def __init__(self, **kwargs):
+        super(BookingRate, self).__init__(**kwargs)
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'booking_id': self.booking_id,
+            'rate_date': self.rate_date.isoformat() if self.rate_date else None,
+            'nightly_rate': self.nightly_rate
+        }
+
+    @staticmethod
+    def from_json(json_data):
+        from werkzeug.http import parse_date
+        rate_date_str = json_data.get('rate_date')
+        rate_date = parse_date(rate_date_str).date() if rate_date_str else None
+        return BookingRate(
+            booking_id=json_data.get('booking_id'),
+            rate_date=rate_date,
+            nightly_rate=json_data.get('nightly_rate')
+        )
 
 class BookingStatus(db.Model):
     __tablename__ = 'booking_status'

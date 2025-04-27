@@ -2,9 +2,10 @@ from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
 from . import api
 import logging
-from .models import Booking
+from .models import Booking, RoomOnline, BookingRate
 from .. import db
 from app.auth.views import get_current_user
+from datetime import timedelta
 
 @api.route('/new_booking', methods=['POST'])
 def new_booking():
@@ -17,21 +18,32 @@ def new_booking():
             })), 401
 
         booking_data = request.get_json()
-        booking = Booking.from_json(booking_data)
+        try:
+            booking = Booking.from_json(booking_data)
+        except ValueError as ve:
+            print(str(ve))
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': str(ve)
+            })), 400
+
         booking.creator_id = user_id
+        assign_nightly_rates(booking)
         db.session.add(booking)
         db.session.commit()
 
         return make_response(jsonify({
             'status': 'success',
-            'message': 'Booking submitted.'
+            'message': 'Booking submitted successfully.'
         })), 201
+
     except Exception as e:
         logging.exception("Error in new_booking: %s", str(e))
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to submit booking. Please try again.'
         })), 500
+
 
 
 @api.route('/edit_booking/<int:booking_id>', methods=['PUT'])
@@ -196,3 +208,28 @@ def delete_booking(booking_id):
             'status': 'error',
             'message': 'Failed to delete booking. Please try again.'
         })), 500
+
+def assign_nightly_rates(booking):
+    current_date = booking.check_in
+    total = 0.0
+
+    while current_date < booking.check_out:
+        room_online = RoomOnline.query.filter_by(
+            room_id=booking.room_id,
+            date=current_date
+        ).first()
+
+        nightly_rate = room_online.price if room_online else 0.0
+
+        booking.booking_rates.append(
+            BookingRate(
+                booking_id=booking.id,  # if booking not yet committed, SQLAlchemy will still track correctly
+                rate_date=current_date,
+                nightly_rate=nightly_rate,
+            )
+        )
+
+        total += nightly_rate
+        current_date += timedelta(days=1)
+
+    booking.rate = total
