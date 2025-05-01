@@ -1,9 +1,10 @@
 from flask import request, jsonify, make_response
 from . import api
 from .. import db
-from .models import Block
-import logging
+from .models import Block, Room, RoomOnline, RatePlan, Season, Booking
+from .constants import Constants
 from datetime import datetime, timedelta, date
+import logging
 
 
 def parse_date(value):
@@ -67,6 +68,7 @@ def edit_block(block_id):
                 'message': 'Block overlaps with existing booking or block.'
             })), 400
 
+        update_room_online_for_block(block)
         db.session.commit()
         return make_response(jsonify({
             'status': 'success',
@@ -90,14 +92,8 @@ def all_blocks():
 
         blocks = db.session.query(Block).filter(
             Block.property_id == property_id,
-            db.or_(
-                Block.start_year == year,
-                Block.end_year == year
-            ),
-            db.or_(
-                Block.start_month == month,
-                Block.end_month == month
-            )
+            db.or_(Block.start_year == year, Block.end_year == year),
+            db.or_(Block.start_month == month, Block.end_month == month)
         ).order_by(Block.start_year, Block.start_month, Block.start_day).all()
 
         return make_response(jsonify({
@@ -140,27 +136,90 @@ def delete_block(block_id):
         })), 500
 
 
-def update_room_online_for_block(block: Block):
-    from .models import RoomOnline  # Import here to avoid circular imports
-    from .constants import Constants
-
+def update_room_online_for_block(block):
     current_date = block.start_date
+    room = Room.query.get(block.room_id)
+    if not room:
+        raise ValueError("Room not found for block")
+
+    rate_plans = RatePlan.query.filter_by(
+        property_id=block.property_id,
+        category_id=room.category_id,
+        is_active=True
+    ).all()
+
+    seasons = Season.query.filter_by(property_id=block.property_id).all()
+
     while current_date < block.end_date:
-        room_online = RoomOnline.query.filter_by(room_id=block.room_id, date=current_date).first()
+        room_online = RoomOnline.query.filter_by(
+            room_id=block.room_id,
+            date=current_date
+        ).first()
+
         if not room_online:
-            room_online = RoomOnline(room_id=block.room_id, date=current_date)
+            price = resolve_price_for_block(
+                room_date=current_date,
+                rate_plans=rate_plans,
+                seasons=seasons
+            )
+
+            room_online = RoomOnline(
+                room_id=block.room_id,
+                property_id=block.property_id,
+                category_id=room.category_id,
+                date=current_date,
+                price=price,
+                room_status_id=Constants.RoomStatusCoding['Blocked'],
+            )
             db.session.add(room_online)
-        room_online.room_status_id = Constants.RoomStatusCoding['Blocked']
+        else:
+            room_online.room_status_id = Constants.RoomStatusCoding['Blocked']
+
         current_date += timedelta(days=1)
 
+    db.session.commit()
 
-def remove_blocked_status_for_block(block: Block):
-    from .models import RoomOnline
-    from .constants import Constants
 
+def resolve_price_for_block(room_date, rate_plans, seasons):
+    plan = next((rp for rp in rate_plans if rp.start_date <= room_date <= rp.end_date), None)
+    if not plan:
+        return 0.0
+
+    is_weekend = room_date.weekday() in [5, 6]
+    base_price = plan.weekend_rate if is_weekend and plan.weekend_rate else plan.base_rate
+
+    in_season = any(season.start_date <= room_date <= season.end_date for season in seasons)
+    if in_season and plan.seasonal_multiplier:
+        base_price *= plan.seasonal_multiplier
+
+    return base_price
+
+
+def remove_blocked_status_for_block(block):
     current_date = block.start_date
     while current_date < block.end_date:
-        room_online = RoomOnline.query.filter_by(room_id=block.room_id, date=current_date).first()
+        room_online = RoomOnline.query.filter_by(
+            room_id=block.room_id,
+            date=current_date
+        ).first()
+
         if room_online and room_online.room_status_id == Constants.RoomStatusCoding['Blocked']:
-            room_online.room_status_id = Constants.RoomStatusCoding['Available']
+            overlapping_booking = Booking.query.filter(
+                Booking.room_id == block.room_id,
+                Booking.check_in <= current_date,
+                Booking.check_out > current_date
+            ).first()
+
+            overlapping_block = Block.query.filter(
+                Block.id != block.id,
+                Block.room_id == block.room_id,
+                Block.start_date <= current_date,
+                Block.end_date > current_date
+            ).first()
+
+            if not overlapping_booking and not overlapping_block:
+                room_online.room_status_id = Constants.RoomStatusCoding['Available']
+
         current_date += timedelta(days=1)
+
+    db.session.commit()
