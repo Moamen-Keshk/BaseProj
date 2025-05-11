@@ -709,8 +709,18 @@ class Booking(db.Model):
             creator_id=json_booking.get('creator_id'),
         )
 
-    def change_status(self, status_id):
-        self.status_id = status_id
+    def change_status(self, status_input):
+        if isinstance(status_input, str):
+            status_id = Constants.BookingStatusCoding.get(status_input)
+            if not status_id:
+                raise ValueError(f"Unknown status name: {status_input}")
+            self.status_id = status_id
+        elif isinstance(status_input, int):
+            if status_input not in Constants.BookingStatusCoding:
+                raise ValueError(f"Unknown status ID: {status_input}")
+            self.status_id = status_input
+        else:
+            raise TypeError("status_input must be str or int")
 
 
 class BookingRate(db.Model):

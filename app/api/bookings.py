@@ -2,7 +2,7 @@ from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
 from . import api
 import logging
-from .models import Booking, RoomOnline, BookingRate
+from .models import Booking, RoomOnline, BookingRate, BookingStatus
 from .. import db
 from app.auth.views import get_current_user
 from datetime import timedelta
@@ -233,3 +233,45 @@ def assign_nightly_rates(booking):
         current_date += timedelta(days=1)
 
     booking.rate = total
+
+@api.route('/check_in_booking/<int:booking_id>', methods=['POST'])
+def check_in_booking(booking_id):
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        booking = db.session.query(Booking).filter_by(id=booking_id).first()
+
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        # Get the 'CHECKED IN' status
+        checked_in_status = db.session.query(BookingStatus).filter_by(code='CHECKED IN').first()
+        if not checked_in_status:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Checked In status not configured in the system.'
+            })), 500
+
+        # Change status
+        booking.change_status(checked_in_status.id)
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Booking status updated to CHECKED IN.'
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in check_in_booking: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to update booking status.'
+        })), 500
