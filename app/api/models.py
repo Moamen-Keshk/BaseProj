@@ -594,12 +594,15 @@ class PaymentStatus(db.Model):
         color = json_status.get('color')
         return PaymentStatus(code=code, name=name, color=color)
 
+
 class Booking(db.Model):
     __tablename__ = 'bookings'
     id = db.Column(db.Integer, primary_key=True)
     confirmation_number = db.Column(db.Integer, unique=True)
     first_name = db.Column(db.String(32))
     last_name = db.Column(db.String(32))
+    email = db.Column(db.String(64))
+    phone = db.Column(db.String(20))
     number_of_adults = db.Column(db.Integer)
     number_of_children = db.Column(db.Integer)
     payment_status_id = db.Column(db.Integer, db.ForeignKey('payment_status.id'), default=1)
@@ -644,6 +647,8 @@ class Booking(db.Model):
             'confirmation_number': self.confirmation_number,
             'first_name': self.first_name,
             'last_name': self.last_name,
+            'email': self.email,
+            'phone': self.phone,
             'number_of_adults': self.number_of_adults,
             'number_of_children': self.number_of_children,
             'payment_status_id': self.payment_status_id,
@@ -676,10 +681,8 @@ class Booking(db.Model):
             if not val:
                 raise ValueError(f"Missing date for field {key}")
             try:
-                # First, try to parse ISO8601 "yyyy-mm-dd"
                 return datetime.strptime(val, "%Y-%m-%d").date()
             except ValueError:
-                # Fall back to werkzeug parse_date (which handles RFC 2822, ISO full datetime)
                 parsed = parse_date(val)
                 if not parsed:
                     raise ValueError(f"Invalid date format for field {key}: {val}")
@@ -688,6 +691,8 @@ class Booking(db.Model):
         return Booking(
             first_name=json_booking.get('first_name'),
             last_name=json_booking.get('last_name'),
+            email=json_booking.get('email'),
+            phone=json_booking.get('phone'),
             number_of_adults=json_booking.get('number_of_adults'),
             number_of_children=json_booking.get('number_of_children'),
             payment_status_id=json_booking.get('payment_status_id'),
@@ -721,6 +726,7 @@ class Booking(db.Model):
             self.status_id = status_input
         else:
             raise TypeError("status_input must be str or int")
+
 
 
 class BookingRate(db.Model):

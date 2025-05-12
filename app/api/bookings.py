@@ -44,12 +44,9 @@ def new_booking():
             'message': 'Failed to submit booking. Please try again.'
         })), 500
 
-
-
 @api.route('/edit_booking/<int:booking_id>', methods=['PUT'])
 def edit_booking(booking_id):
     try:
-        # Get the current user ID and ensure they are authorized
         user_id = get_current_user()
         if not isinstance(user_id, str):
             return make_response(jsonify({
@@ -57,10 +54,8 @@ def edit_booking(booking_id):
                 'message': 'Unauthorized access.'
             })), 401
 
-        # Fetch the booking data from the request
         booking_data = request.get_json()
 
-        # Find the booking by ID
         booking = db.session.query(Booking).filter_by(id=booking_id, creator_id=user_id).first()
         if not booking:
             return make_response(jsonify({
@@ -68,11 +63,14 @@ def edit_booking(booking_id):
                 'message': 'Booking not found or you do not have permission to edit it.'
             })), 404
 
-        # Update booking fields
         if 'first_name' in booking_data:
             booking.first_name = booking_data['first_name']
         if 'last_name' in booking_data:
             booking.last_name = booking_data['last_name']
+        if 'email' in booking_data:
+            booking.email = booking_data['email']
+        if 'phone' in booking_data:
+            booking.phone = booking_data['phone']
         if 'number_of_adults' in booking_data:
             booking.number_of_adults = booking_data['number_of_adults']
         if 'number_of_children' in booking_data:
@@ -108,10 +106,6 @@ def edit_booking(booking_id):
         if 'room_id' in booking_data:
             booking.room_id = booking_data['room_id']
 
-        # Additional fields can be updated here
-        # ...
-
-        # Save changes to the database
         db.session.commit()
 
         return make_response(jsonify({
@@ -126,7 +120,6 @@ def edit_booking(booking_id):
             'message': 'Failed to update booking. Please try again.'
         })), 500
 
-
 @api.route('/all-bookings', methods=['GET'])
 def all_bookings():
     try:
@@ -140,12 +133,6 @@ def all_bookings():
         property_id = request.args.get('property_id', type=int)
         check_in_year = request.args.get('check_in_year', type=int)
         check_in_month = request.args.get('check_in_month', type=int)
-
-#        if not (property_id and check_in_year and check_in_month):
-#            return make_response(jsonify({
-#                'status': 'fail',
-#                'message': 'Missing required query parameters.'
-#            })), 400
 
         bookings = db.session.query(Booking).filter(
             and_(
@@ -223,7 +210,7 @@ def assign_nightly_rates(booking):
 
         booking.booking_rates.append(
             BookingRate(
-                booking_id=booking.id,  # if booking not yet committed, SQLAlchemy will still track correctly
+                booking_id=booking.id,
                 rate_date=current_date,
                 nightly_rate=nightly_rate,
             )
@@ -252,7 +239,6 @@ def check_in_booking(booking_id):
                 'message': 'Booking not found.'
             })), 404
 
-        # Get the 'CHECKED IN' status
         checked_in_status = db.session.query(BookingStatus).filter_by(code='CHECKED IN').first()
         if not checked_in_status:
             return make_response(jsonify({
@@ -260,7 +246,6 @@ def check_in_booking(booking_id):
                 'message': 'Checked In status not configured in the system.'
             })), 500
 
-        # Change status
         booking.change_status(checked_in_status.id)
         db.session.commit()
 
