@@ -321,3 +321,34 @@ def bookings_by_date():
             'status': 'error',
             'message': 'Failed to fetch bookings.'
         })), 500
+
+
+@api.route('/booking/<int:booking_id>', methods=['GET'])
+def get_booking_by_id(booking_id):
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        booking = db.session.query(Booking).filter_by(id=booking_id).first()
+
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        return make_response(jsonify({
+            'status': 'success',
+            'data': booking.to_json()
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in get_booking_by_id: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch booking.'
+        })), 500
