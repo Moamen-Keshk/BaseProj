@@ -5,7 +5,7 @@ import logging
 from .models import Booking, RoomOnline, BookingRate, BookingStatus
 from .. import db
 from app.auth.views import get_current_user
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 @api.route('/new_booking', methods=['POST'])
 def new_booking():
@@ -106,6 +106,9 @@ def edit_booking(booking_id):
         if 'room_id' in booking_data:
             booking.room_id = booking_data['room_id']
 
+        BookingRate.query.filter_by(booking_id=booking.id).delete()
+        assign_nightly_rates(booking)
+
         db.session.commit()
 
         return make_response(jsonify({
@@ -197,6 +200,12 @@ def delete_booking(booking_id):
         })), 500
 
 def assign_nightly_rates(booking):
+    # Ensure check_in and check_out are datetime.date objects
+    if isinstance(booking.check_in, str):
+        booking.check_in = datetime.strptime(booking.check_in, "%Y-%m-%dT%H:%M:%S.%f").date()
+    if isinstance(booking.check_out, str):
+        booking.check_out = datetime.strptime(booking.check_out, "%Y-%m-%dT%H:%M:%S.%f").date()
+
     current_date = booking.check_in
     total = 0.0
 
@@ -220,6 +229,8 @@ def assign_nightly_rates(booking):
         current_date += timedelta(days=1)
 
     booking.rate = total
+
+
 
 @api.route('/check_in_booking/<int:booking_id>', methods=['POST'])
 def check_in_booking(booking_id):
@@ -259,4 +270,54 @@ def check_in_booking(booking_id):
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to update booking status.'
+        })), 500
+
+@api.route('/bookings_by_date', methods=['GET'])
+def bookings_by_date():
+    try:
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Unauthorized access.'
+            })), 401
+
+        property_id = request.args.get('property_id', type=int)
+        date_str = request.args.get('date')  # Expecting 'YYYY-MM-DD'
+
+        if not property_id or not date_str:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Missing property_id or date parameter.'
+            })), 400
+
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Invalid date format. Expected YYYY-MM-DD.'
+            })), 400
+
+        # Fetch bookings with check_in or check_out equal to the date
+        bookings = db.session.query(Booking).filter(
+            Booking.property_id == property_id,
+            or_(
+                Booking.check_in == target_date,
+                Booking.check_out == target_date
+            )
+        ).order_by(Booking.check_in).all()
+
+        response_data = [booking.to_json() for booking in bookings]
+
+        return make_response(jsonify({
+            'status': 'success',
+            'data': response_data
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in bookings_by_date: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch bookings.'
         })), 500
