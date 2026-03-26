@@ -272,8 +272,8 @@ def check_in_booking(booking_id):
             'message': 'Failed to update booking status.'
         })), 500
 
-@api.route('/bookings_by_date', methods=['GET'])
-def bookings_by_date():
+@api.route('/bookings_by_date_and_state', methods=['GET'])
+def bookings_by_date_and_state():
     try:
         user_id = get_current_user()
         if not isinstance(user_id, str):
@@ -283,12 +283,13 @@ def bookings_by_date():
             })), 401
 
         property_id = request.args.get('property_id', type=int)
-        date_str = request.args.get('date')  # Expecting 'YYYY-MM-DD'
+        date_str = request.args.get('date')
+        booking_type = request.args.get('booking_state', type=str)
 
-        if not property_id or not date_str:
+        if not property_id or not date_str or not booking_type:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Missing property_id or date parameter.'
+                'message': 'Missing property_id, date, or booking_type parameter.'
             })), 400
 
         try:
@@ -299,20 +300,37 @@ def bookings_by_date():
                 'message': 'Invalid date format. Expected YYYY-MM-DD.'
             })), 400
 
-        # Fetch bookings with check_in or check_out equal to the date
-        bookings = db.session.query(Booking).filter(
-            Booking.property_id == property_id,
-            or_(
-                Booking.check_in == target_date,
-                Booking.check_out == target_date
-            )
-        ).order_by(Booking.check_in).all()
+        booking_type = booking_type.strip().lower()
 
-        response_data = [booking.to_json() for booking in bookings]
+        filters = {
+            'arrivals': Booking.check_in == target_date,
+            'departures': Booking.check_out == target_date,
+            'inhouse': and_(
+                Booking.check_in <= target_date,
+                Booking.check_out > target_date
+            ),
+        }
+
+        selected_filter = filters.get(booking_type)
+        if selected_filter is None:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Invalid booking_type. Use InHouse, Arrivals, or Departures.'
+            })), 400
+
+        bookings = (
+            db.session.query(Booking)
+            .filter(
+                Booking.property_id == property_id,
+                selected_filter
+            )
+            .order_by(Booking.check_in)
+            .all()
+        )
 
         return make_response(jsonify({
             'status': 'success',
-            'data': response_data
+            'data': [booking.to_json() for booking in bookings]
         })), 201
 
     except Exception as e:
