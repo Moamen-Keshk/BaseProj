@@ -5,15 +5,15 @@ from . import api
 import logging
 from .forms import EditProfileAdminForm
 from .. import db
-from .models import Role, User, Notification, Order, Category, PaymentStatus
+from app.api.models import Role, User, Notification, Order
 from .decorators import admin_required
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 
 
 @api.after_app_request
 def after_request(response):
     for query in get_recorded_queries():
-        if query.duration >= current_app.config['FLASKY_SLOW_DB_QUERY_TIME']:
+        if query.duration >= current_app.config['SLOW_DB_QUERY_TIME']:
             current_app.logger.warning(
                 'Slow query: %s\nParameters: %s\nDuration: %fs\nContext: %s\n'
                 % (query.statement, query.parameters, query.duration,

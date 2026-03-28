@@ -2,10 +2,16 @@ from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
 from . import api
 import logging
-from .models import Booking, RoomOnline, BookingRate, BookingStatus
+from types import SimpleNamespace
+from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus
 from .. import db
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 from datetime import timedelta, datetime
+from app.api.channel_manager.services.pms_sync import (
+    queue_booking_ari_sync,
+    queue_booking_transition_ari_sync,
+)
+
 
 @api.route('/new_booking', methods=['POST'])
 def new_booking():
@@ -32,6 +38,8 @@ def new_booking():
         db.session.add(booking)
         db.session.commit()
 
+        queue_booking_ari_sync(booking, 'booking_created')
+
         return make_response(jsonify({
             'status': 'success',
             'message': 'Booking submitted successfully.'
@@ -43,6 +51,7 @@ def new_booking():
             'status': 'error',
             'message': 'Failed to submit booking. Please try again.'
         })), 500
+
 
 @api.route('/edit_booking/<int:booking_id>', methods=['PUT'])
 def edit_booking(booking_id):
@@ -62,6 +71,11 @@ def edit_booking(booking_id):
                 'status': 'fail',
                 'message': 'Booking not found or you do not have permission to edit it.'
             })), 404
+
+        old_property_id = booking.property_id
+        old_room_id = booking.room_id
+        old_check_in = booking.check_in
+        old_check_out = booking.check_out
 
         if 'first_name' in booking_data:
             booking.first_name = booking_data['first_name']
@@ -111,6 +125,15 @@ def edit_booking(booking_id):
 
         db.session.commit()
 
+        queue_booking_transition_ari_sync(
+            old_property_id=old_property_id,
+            old_room_id=old_room_id,
+            old_check_in=old_check_in,
+            old_check_out=old_check_out,
+            booking=booking,
+            reason='booking_updated',
+        )
+
         return make_response(jsonify({
             'status': 'success',
             'message': 'Booking updated successfully.'
@@ -122,6 +145,7 @@ def edit_booking(booking_id):
             'status': 'error',
             'message': 'Failed to update booking. Please try again.'
         })), 500
+
 
 @api.route('/all-bookings', methods=['GET'])
 def all_bookings():
@@ -166,6 +190,7 @@ def all_bookings():
             'message': 'Failed to fetch bookings.'
         })), 500
 
+
 @api.route('/delete_booking/<int:booking_id>', methods=['DELETE'])
 def delete_booking(booking_id):
     try:
@@ -184,8 +209,22 @@ def delete_booking(booking_id):
                 'message': 'Booking not found or permission denied.'
             })), 404
 
+        old_property_id = booking.property_id
+        old_room_id = booking.room_id
+        old_check_in = booking.check_in
+        old_check_out = booking.check_out
+
         db.session.delete(booking)
         db.session.commit()
+
+        deleted_snapshot = SimpleNamespace(
+            property_id=old_property_id,
+            room_id=old_room_id,
+            check_in=old_check_in,
+            check_out=old_check_out,
+        )
+
+        queue_booking_ari_sync(deleted_snapshot, 'booking_deleted')
 
         return make_response(jsonify({
             'status': 'success',
@@ -198,6 +237,7 @@ def delete_booking(booking_id):
             'status': 'error',
             'message': 'Failed to delete booking. Please try again.'
         })), 500
+
 
 def assign_nightly_rates(booking):
     # Ensure check_in and check_out are datetime.date objects
@@ -229,7 +269,6 @@ def assign_nightly_rates(booking):
         current_date += timedelta(days=1)
 
     booking.rate = total
-
 
 
 @api.route('/check_in_booking/<int:booking_id>', methods=['POST'])
@@ -271,6 +310,7 @@ def check_in_booking(booking_id):
             'status': 'error',
             'message': 'Failed to update booking status.'
         })), 500
+
 
 @api.route('/bookings_by_date_and_state', methods=['GET'])
 def bookings_by_date_and_state():

@@ -1,10 +1,16 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import Season, RatePlan, RoomOnline
+from types import SimpleNamespace
+
+from app.api.models import Season, RatePlan, RoomOnline
 from .. import db
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 from app.api.utils.room_online_generator import update_room_online_for_season
+from app.api.channel_manager.services.pms_sync import (
+    queue_season_ari_sync,
+    queue_season_transition_ari_sync,
+)
 
 
 @api.route('/new_season', methods=['POST'])
@@ -17,8 +23,14 @@ def new_season():
         season = Season.from_json(request.json)
         db.session.add(season)
         db.session.commit()
+
         update_room_online_for_season(season)
+
+        # New season = only queue the new range
+        queue_season_ari_sync(season, 'season_created')
+
         return _success_response('Season added successfully.', 201)
+
     except Exception as e:
         logging.exception("Error adding season: %s", e)
         return _error_response('Failed to add season.', 400)
@@ -37,6 +49,10 @@ def update_season(season_id):
         if not season:
             return _not_found_response('Season not found.')
 
+        old_property_id = season.property_id
+        old_start_date = season.start_date
+        old_end_date = season.end_date
+
         if 'property_id' in data:
             season.property_id = data['property_id']
         if 'rate_plan_id' in data:
@@ -50,6 +66,15 @@ def update_season(season_id):
 
         db.session.commit()
         update_room_online_for_season(season)
+
+        queue_season_transition_ari_sync(
+            old_property_id=old_property_id,
+            old_start_date=old_start_date,
+            old_end_date=old_end_date,
+            season=season,
+            reason='season_updated',
+        )
+
         return _success_response('Season updated successfully.', 201)
 
     except Exception as e:
@@ -126,9 +151,17 @@ def delete_season(season_id):
                     if is_weekend and matching_plan.weekend_rate is not None
                     else matching_plan.base_rate
                 )
-                entry.price = new_price  # ✅ Remove seasonal multiplier
+                entry.price = new_price
 
         db.session.commit()
+
+        deleted_snapshot = SimpleNamespace(
+            property_id=property_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        queue_season_ari_sync(deleted_snapshot, 'season_deleted')
 
         return make_response(jsonify({
             'status': 'success',
@@ -143,8 +176,6 @@ def delete_season(season_id):
         })), 500
 
 
-
-# Helper Responses
 def _success_response(message, code=201):
     return make_response(jsonify({
         'status': 'success',

@@ -1,7 +1,7 @@
 from functools import wraps
 from flask_login import current_user
 from .errors import forbidden
-from .models import Permission
+from app.api.models import Permission
 
 
 def permission_required(permission):

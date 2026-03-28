@@ -2,8 +2,8 @@ from flask import request, make_response, jsonify
 from . import api
 import logging
 from .. import db
-from .models import Category
-from app.auth.views import get_current_user
+from app.api.models import Category
+from app.auth.utils import get_current_user
 
 @api.route('/new-category', methods=['POST'])
 def new_category():

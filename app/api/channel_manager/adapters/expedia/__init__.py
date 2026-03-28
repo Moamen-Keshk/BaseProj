@@ -1,0 +1,1 @@
+# Expedia adapter package

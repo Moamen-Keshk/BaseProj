@@ -1,8 +1,8 @@
 from flask import request, make_response, jsonify
 from . import api
 from .. import db
-from .models import BookingRate
-from app.auth.views import get_current_user
+from app.api.models import BookingRate
+from app.auth.utils import get_current_user
 import logging
 
 

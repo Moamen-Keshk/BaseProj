@@ -1,11 +1,17 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import RatePlan, RoomOnline
+from types import SimpleNamespace
+from app.api.models import RatePlan, RoomOnline
 from .. import db
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 from datetime import datetime
 from app.api.utils.room_online_generator import generate_or_update_room_online_for_rate_plan
+from app.api.channel_manager.services.pms_sync import (
+    queue_rate_plan_ari_sync,
+    queue_rate_plan_transition_ari_sync,
+)
+
 
 @api.route('/new_rate_plan', methods=['POST'])
 def new_rate_plan():
@@ -16,12 +22,16 @@ def new_rate_plan():
             db.session.add(rate_plan)
             db.session.flush()
             db.session.commit()
+
             generate_or_update_room_online_for_rate_plan(rate_plan)
+            queue_rate_plan_ari_sync(rate_plan, 'rate_plan_created')
+
             responseObject = {
                 'status': 'success',
                 'message': 'Rate Plan added successfully.'
             }
             return make_response(jsonify(responseObject)), 201
+
         except Exception as e:
             logging.exception(e)
             responseObject = {
@@ -29,6 +39,7 @@ def new_rate_plan():
                 'message': 'Some error occurred. Please try again.'
             }
             return make_response(jsonify(responseObject)), 401
+
     responseObject = {
         'status': 'expired',
         'message': 'Session expired, log in required!'
@@ -55,6 +66,11 @@ def edit_rate_plan(rate_plan_id):
                 'message': 'Rate Plan not found.'
             })), 404
 
+        old_property_id = rate_plan.property_id
+        old_category_id = rate_plan.category_id
+        old_start_date = rate_plan.start_date
+        old_end_date = rate_plan.end_date
+
         if 'name' in rate_data:
             rate_plan.name = rate_data['name']
         if 'base_rate' in rate_data:
@@ -75,6 +91,15 @@ def edit_rate_plan(rate_plan_id):
         db.session.commit()
         generate_or_update_room_online_for_rate_plan(rate_plan)
 
+        queue_rate_plan_transition_ari_sync(
+            old_property_id=old_property_id,
+            old_category_id=old_category_id,
+            old_start_date=old_start_date,
+            old_end_date=old_end_date,
+            rate_plan=rate_plan,
+            reason='rate_plan_updated',
+        )
+
         return make_response(jsonify({
             'status': 'success',
             'message': 'Rate Plan updated successfully.'
@@ -93,7 +118,8 @@ def get_rate_plans(property_id, category_id):
     resp = get_current_user()
     if isinstance(resp, str):
         rate_plans = RatePlan.query.filter(
-            RatePlan.property_id == property_id & RatePlan.category_id == category_id
+            RatePlan.property_id == property_id,
+            RatePlan.category_id == category_id
         ).order_by(RatePlan.start_date).all()
 
         data = [plan.to_json() for plan in rate_plans]
@@ -132,6 +158,7 @@ def all_rate_plans(property_id):
         'status': 'fail',
         'message': resp
     })), 401
+
 
 @api.route('/rate_plan/<int:rate_plan_id>', methods=['GET'])
 def get_rate_plan_by_id(rate_plan_id):
@@ -181,7 +208,11 @@ def delete_rate_plan(rate_plan_id):
                 'message': 'Rate Plan not found.'
             })), 404
 
-        # 🧹 Step 1: Delete RoomOnline entries linked to this rate plan
+        old_property_id = rate_plan.property_id
+        old_category_id = rate_plan.category_id
+        old_start_date = rate_plan.start_date
+        old_end_date = rate_plan.end_date
+
         RoomOnline.query.filter(
             RoomOnline.property_id == rate_plan.property_id,
             RoomOnline.category_id == rate_plan.category_id,
@@ -189,9 +220,17 @@ def delete_rate_plan(rate_plan_id):
             RoomOnline.date <= rate_plan.end_date
         ).delete(synchronize_session=False)
 
-        # 🧹 Step 2: Delete the rate plan itself
         db.session.delete(rate_plan)
         db.session.commit()
+
+        deleted_snapshot = SimpleNamespace(
+            property_id=old_property_id,
+            category_id=old_category_id,
+            start_date=old_start_date,
+            end_date=old_end_date,
+        )
+
+        queue_rate_plan_ari_sync(deleted_snapshot, 'rate_plan_deleted')
 
         return make_response(jsonify({
             'status': 'success',
@@ -204,4 +243,3 @@ def delete_rate_plan(rate_plan_id):
             'status': 'error',
             'message': 'Failed to delete rate plan. Please try again.'
         })), 500
-

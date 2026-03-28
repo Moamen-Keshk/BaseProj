@@ -1,10 +1,15 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import RoomOnline
+from types import SimpleNamespace
+from app.api.models import RoomOnline
 from .. import db
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 from datetime import datetime
+from app.api.channel_manager.services.pms_sync import (
+    queue_room_online_ari_sync,
+    queue_room_online_transition_ari_sync,
+)
 
 
 @api.route('/new_room_online', methods=['POST'])
@@ -24,8 +29,12 @@ def new_room_online():
                     'message': 'Missing required fields (room_id, date, property_id, category_id).'
                 })), 400
 
-            # Prevent duplicates
-            existing = RoomOnline.query.filter_by(room_id=room_id, date=date, property_id=property_id).first()
+            existing = RoomOnline.query.filter_by(
+                room_id=room_id,
+                date=date,
+                property_id=property_id
+            ).first()
+
             if existing:
                 return make_response(jsonify({
                     'status': 'fail',
@@ -36,6 +45,9 @@ def new_room_online():
             room_online = RoomOnline.from_json(data)
             db.session.add(room_online)
             db.session.commit()
+
+            queue_room_online_ari_sync(room_online, 'room_online_created')
+
             return make_response(jsonify({
                 'status': 'success',
                 'message': 'Room online added successfully.',
@@ -73,14 +85,32 @@ def update_room_online(rate_id):
                 'message': 'Room rate not found.'
             })), 404
 
+        old_property_id = room_online.property_id
+        old_room_id = room_online.room_id
+        old_date = room_online.date
+
         if 'price' in data:
             room_online.price = data['price']
         if 'date' in data:
             room_online.date = datetime.fromisoformat(data['date']).date()
         if 'category_id' in data:
             room_online.category_id = data['category_id']
+        if 'property_id' in data:
+            room_online.property_id = data['property_id']
+        if 'room_id' in data:
+            room_online.room_id = data['room_id']
+        if 'room_status_id' in data:
+            room_online.room_status_id = data['room_status_id']
 
         db.session.commit()
+
+        queue_room_online_transition_ari_sync(
+            old_property_id=old_property_id,
+            old_room_id=old_room_id,
+            old_date=old_date,
+            room_online=room_online,
+            reason='room_online_updated',
+        )
 
         return make_response(jsonify({
             'status': 'success',
@@ -113,8 +143,20 @@ def delete_room_online(rate_id):
                 'message': 'Room online not found.'
             })), 404
 
+        old_property_id = room_online.property_id
+        old_room_id = room_online.room_id
+        old_date = room_online.date
+
         db.session.delete(room_online)
         db.session.commit()
+
+        deleted_snapshot = SimpleNamespace(
+            property_id=old_property_id,
+            room_id=old_room_id,
+            date=old_date,
+        )
+
+        queue_room_online_ari_sync(deleted_snapshot, 'room_online_deleted')
 
         return make_response(jsonify({
             'status': 'success',

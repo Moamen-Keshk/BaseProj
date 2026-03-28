@@ -7,9 +7,10 @@ from flask_pagedown import PageDown
 from flask_sqlalchemy import SQLAlchemy
 from config import config
 import os
-from firebase_admin import initialize_app
+from firebase_admin import initialize_app, get_app
 from firebase_admin import credentials
 import pymysql
+
 pymysql.install_as_MySQLdb()
 
 bootstrap = Bootstrap()
@@ -31,7 +32,11 @@ def create_app(config_name):
     moment.init_app(app)
     db.init_app(app)
     pagedown.init_app(app)
-    initialize_app(cred)
+
+    try:
+        get_app()
+    except ValueError:
+        initialize_app(cred)
 
     if app.config['SSL_REDIRECT']:
         from flask_sslify import SSLify

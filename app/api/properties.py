@@ -1,9 +1,9 @@
 from flask import request, make_response, jsonify
 from . import api
 import logging
-from .models import Property
+from app.api.models import Property
 from .. import db
-from app.auth.views import get_current_user
+from app.auth.utils import get_current_user
 
 @api.route('/new_property', methods=['POST'])
 def new_property():

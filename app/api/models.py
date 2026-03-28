@@ -9,9 +9,9 @@ from flask_login import UserMixin, AnonymousUserMixin
 from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
 
-from .. import db
+from app import db
 import random
-from .constants import Constants
+from app.api.constants import Constants
 import json
 
 def parse_date(value):

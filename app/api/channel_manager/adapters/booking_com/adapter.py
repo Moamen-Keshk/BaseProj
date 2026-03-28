@@ -1,22 +1,22 @@
 from app.api.channel_manager.adapters.base import BaseChannelAdapter
-from .client import BookingComClient
-from .mapper import BookingComMapper
-from .parser import BookingComParser
+from app.api.channel_manager.adapters.booking_com.client import BookingComClient
+from app.api.channel_manager.adapters.booking_com.mapper import BookingComMapper
+from app.api.channel_manager.adapters.booking_com.parser import BookingComParser
 
 
 class BookingComAdapter(BaseChannelAdapter):
-    channel_code = "booking_com"
+    channel_code = 'booking_com'
 
     def validate_connection(self, connection) -> list[str]:
         errors = []
         credentials = connection.credentials_json or {}
 
-        if not credentials.get("hotel_id"):
-            errors.append("Missing Booking.com hotel_id")
-        if not credentials.get("username"):
-            errors.append("Missing Booking.com username")
-        if not credentials.get("password"):
-            errors.append("Missing Booking.com password")
+        if not credentials.get('hotel_id'):
+            errors.append('Missing Booking.com hotel_id')
+        if not credentials.get('username'):
+            errors.append('Missing Booking.com username')
+        if not credentials.get('password'):
+            errors.append('Missing Booking.com password')
 
         return errors
 
@@ -26,26 +26,27 @@ class BookingComAdapter(BaseChannelAdapter):
         response = client.send_ari(xml_payload)
 
         return {
-            "success": response.get("success", False),
-            "request_body": xml_payload,
-            "response_body": response.get("body"),
-            "http_status": response.get("status_code"),
-            "count": len(ari_updates),
+            'success': response.get('success', False),
+            'request_body': xml_payload,
+            'response_body': response.get('body'),
+            'http_status': response.get('status_code'),
+            'count': len(ari_updates),
         }
 
     def pull_reservations(self, connection, cursor: dict | None = None) -> dict:
         client = BookingComClient(connection)
         raw_response = client.fetch_reservations(cursor=cursor)
+
         reservations = BookingComParser.parse_reservations(
             property_id=connection.property_id,
-            raw_response=raw_response.get("body"),
+            raw_response=raw_response.get('body') or '',
         )
 
         return {
-            "reservations": reservations,
-            "next_cursor": raw_response.get("next_cursor"),
-            "raw_body": raw_response.get("body"),
-            "http_status": raw_response.get("status_code"),
+            'reservations': reservations,
+            'next_cursor': raw_response.get('next_cursor'),
+            'raw_body': raw_response.get('body'),
+            'http_status': raw_response.get('status_code'),
         }
 
     def acknowledge_reservation(
@@ -61,7 +62,7 @@ class BookingComAdapter(BaseChannelAdapter):
         )
 
         return {
-            "success": response.get("success", False),
-            "response_body": response.get("body"),
-            "http_status": response.get("status_code"),
+            'success': response.get('success', False),
+            'response_body': response.get('body'),
+            'http_status': response.get('status_code'),
         }

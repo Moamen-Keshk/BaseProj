@@ -1,7 +1,7 @@
 from flask import make_response, jsonify
 from . import api
-from .models import PaymentStatus
-from app.auth.views import get_current_user
+from app.api.models import PaymentStatus
+from app.auth.utils import get_current_user
 
 @api.route('/all-payment-status')
 def all_payment_status():

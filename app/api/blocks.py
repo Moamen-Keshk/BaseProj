@@ -1,10 +1,15 @@
 from flask import request, jsonify, make_response
 from . import api
 from .. import db
-from .models import Block, Room, RoomOnline, RatePlan, Season, Booking
-from .constants import Constants
+from app.api.models import Block, Room, RoomOnline, RatePlan, Season, Booking
+from app.api.constants import Constants
 from datetime import datetime, timedelta, date
+from types import SimpleNamespace
 import logging
+from app.api.channel_manager.services.pms_sync import (
+    queue_block_ari_sync,
+    queue_block_transition_ari_sync,
+)
 
 
 def parse_date(value):
@@ -25,6 +30,9 @@ def new_block():
         db.session.add(block)
         update_room_online_for_block(block)
         db.session.commit()
+
+        # New block = only queue the new range
+        queue_block_ari_sync(block, 'block_created')
 
         return make_response(jsonify({
             'status': 'success',
@@ -55,6 +63,11 @@ def edit_block(block_id):
                 'message': 'Block not found.'
             })), 404
 
+        old_property_id = block.property_id
+        old_room_id = block.room_id
+        old_start_date = block.start_date
+        old_end_date = block.end_date
+
         block.note = block_data.get('note', block.note)
         block.start_date = parse_date(block_data.get('start_date', block.start_date))
         block.end_date = parse_date(block_data.get('end_date', block.end_date))
@@ -70,6 +83,16 @@ def edit_block(block_id):
 
         update_room_online_for_block(block)
         db.session.commit()
+
+        queue_block_transition_ari_sync(
+            old_property_id=old_property_id,
+            old_room_id=old_room_id,
+            old_start_date=old_start_date,
+            old_end_date=old_end_date,
+            block=block,
+            reason='block_updated',
+        )
+
         return make_response(jsonify({
             'status': 'success',
             'message': 'Block updated successfully.'
@@ -119,9 +142,23 @@ def delete_block(block_id):
                 'message': 'Block not found.'
             })), 404
 
+        old_property_id = block.property_id
+        old_room_id = block.room_id
+        old_start_date = block.start_date
+        old_end_date = block.end_date
+
         remove_blocked_status_for_block(block)
         db.session.delete(block)
         db.session.commit()
+
+        deleted_snapshot = SimpleNamespace(
+            property_id=old_property_id,
+            room_id=old_room_id,
+            start_date=old_start_date,
+            end_date=old_end_date,
+        )
+
+        queue_block_ari_sync(deleted_snapshot, 'block_deleted')
 
         return make_response(jsonify({
             'status': 'success',
