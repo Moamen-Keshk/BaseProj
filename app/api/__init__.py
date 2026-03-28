@@ -14,7 +14,7 @@ from . import (
     rate_plan,
     season,
     room_online,
-    blocks,
+    blocks
 )
 
 

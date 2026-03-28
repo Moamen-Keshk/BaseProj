@@ -48,4 +48,8 @@ def create_app(config_name):
     from .api import api as api_blueprint
     app.register_blueprint(api_blueprint, url_prefix='/api/v1')
 
+    from .api.channel_manager import channel_manager as channel_manager_blueprint
+    from .api.channel_manager import routes
+    app.register_blueprint(channel_manager_blueprint, url_prefix='/channel_manager')
+
     return app

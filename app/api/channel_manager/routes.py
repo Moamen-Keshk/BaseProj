@@ -3,7 +3,7 @@ import logging
 
 from app import db
 from app.auth.utils import get_current_user
-from app.api import api
+from . import channel_manager
 from app.api.channel_manager.models import (
     ChannelConnection,
     ChannelRoomMap,
@@ -11,13 +11,8 @@ from app.api.channel_manager.models import (
     ChannelSyncJob,
     ChannelMessageLog,
 )
-from app.api.channel_manager.tasks.push_ari import process_ari_push_job
-from app.api.channel_manager.tasks.pull_reservations import process_reservation_pull_job
-from app.api.channel_manager.tasks.retry_jobs import retry_channel_job
-from app.api.channel_manager.tasks.dispatch_jobs import dispatch_pending_channel_jobs
-from app.api.channel_manager.tasks.schedule_pulls import schedule_reservation_pull_jobs
 
-@api.route('/channel_manager/connections', methods=['GET'])
+@channel_manager.route('/channel_manager/connections', methods=['GET'])
 def list_channel_connections():
     try:
         user_id = get_current_user()
@@ -42,7 +37,7 @@ def list_channel_connections():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch channel connections.'})), 500
 
 
-@api.route('/channel_manager/connections', methods=['POST'])
+@channel_manager.route('/channel_manager/connections', methods=['POST'])
 def create_channel_connection():
     try:
         user_id = get_current_user()
@@ -74,7 +69,7 @@ def create_channel_connection():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create channel connection.'})), 500
 
 
-@api.route('/channel_manager/connections/<int:connection_id>', methods=['PUT'])
+@channel_manager.route('/channel_manager/connections/<int:connection_id>', methods=['PUT'])
 def edit_channel_connection(connection_id):
     try:
         user_id = get_current_user()
@@ -109,7 +104,7 @@ def edit_channel_connection(connection_id):
         return make_response(jsonify({'status': 'error', 'message': 'Failed to update channel connection.'})), 500
 
 
-@api.route('/channel_manager/room_maps', methods=['GET'])
+@channel_manager.route('/channel_manager/room_maps', methods=['GET'])
 def list_channel_room_maps():
     try:
         user_id = get_current_user()
@@ -137,7 +132,7 @@ def list_channel_room_maps():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch room maps.'})), 500
 
 
-@api.route('/channel_manager/room_maps', methods=['POST'])
+@channel_manager.route('/channel_manager/room_maps', methods=['POST'])
 def create_channel_room_map():
     try:
         user_id = get_current_user()
@@ -169,7 +164,7 @@ def create_channel_room_map():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create room mapping.'})), 500
 
 
-@api.route('/channel_manager/rate_maps', methods=['GET'])
+@channel_manager.route('/channel_manager/rate_maps', methods=['GET'])
 def list_channel_rate_maps():
     try:
         user_id = get_current_user()
@@ -197,7 +192,7 @@ def list_channel_rate_maps():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch rate maps.'})), 500
 
 
-@api.route('/channel_manager/rate_maps', methods=['POST'])
+@channel_manager.route('/channel_manager/rate_maps', methods=['POST'])
 def create_channel_rate_map():
     try:
         user_id = get_current_user()
@@ -230,7 +225,7 @@ def create_channel_rate_map():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create rate mapping.'})), 500
 
 
-@api.route('/channel_manager/jobs', methods=['GET'])
+@channel_manager.route('/channel_manager/jobs', methods=['GET'])
 def list_channel_jobs():
     try:
         user_id = get_current_user()
@@ -258,7 +253,7 @@ def list_channel_jobs():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch jobs.'})), 500
 
 
-@api.route('/channel_manager/logs', methods=['GET'])
+@channel_manager.route('/channel_manager/logs', methods=['GET'])
 def list_channel_logs():
     try:
         user_id = get_current_user()
@@ -286,7 +281,7 @@ def list_channel_logs():
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch logs.'})), 500
 
 
-@api.route('/channel_manager/jobs/<int:job_id>/run', methods=['POST'])
+@channel_manager.route('/channel_manager/jobs/<int:job_id>/run', methods=['POST'])
 def run_channel_job(job_id):
     try:
         user_id = get_current_user()
@@ -298,10 +293,13 @@ def run_channel_job(job_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Job not found.'})), 404
 
         if job.job_type == 'ari_push':
+            from .tasks.push_ari import process_ari_push_job
             process_ari_push_job.delay(job.id)
         elif job.job_type == 'reservation_pull':
+            from .tasks.pull_reservations import process_reservation_pull_job
             process_reservation_pull_job.delay(job.id)
         else:
+            from .tasks.retry_jobs import retry_channel_job
             retry_channel_job.delay(job.id)
 
         return make_response(jsonify({
@@ -313,7 +311,7 @@ def run_channel_job(job_id):
         logging.exception("Error in run_channel_job: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to dispatch job.'})), 500
 
-@api.route('/channel_manager/jobs/dispatch', methods=['POST'])
+@channel_manager.route('/channel_manager/jobs/dispatch', methods=['POST'])
 def dispatch_channel_jobs():
     try:
         user_id = get_current_user()
@@ -322,7 +320,7 @@ def dispatch_channel_jobs():
                 'status': 'fail',
                 'message': 'Unauthorized access.'
             })), 401
-
+        from .tasks.dispatch_jobs import dispatch_pending_channel_jobs
         dispatch_pending_channel_jobs.delay()
 
         return make_response(jsonify({
@@ -338,7 +336,7 @@ def dispatch_channel_jobs():
         })), 500
 
 
-@api.route('/channel_manager/jobs/schedule-pulls', methods=['POST'])
+@channel_manager.route('/channel_manager/jobs/schedule-pulls', methods=['POST'])
 def trigger_schedule_reservation_pulls():
     try:
         user_id = get_current_user()
@@ -347,7 +345,7 @@ def trigger_schedule_reservation_pulls():
                 'status': 'fail',
                 'message': 'Unauthorized access.'
             })), 401
-
+        from .tasks.schedule_pulls import schedule_reservation_pull_jobs
         schedule_reservation_pull_jobs.delay()
 
         return make_response(jsonify({
