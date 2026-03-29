@@ -2,13 +2,12 @@ from datetime import datetime, timezone
 
 from app import db
 
-
 class ChannelConnection(db.Model):
     __tablename__ = 'channel_connections'
 
     id = db.Column(db.Integer, primary_key=True)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
-    channel_code = db.Column(db.String(32), nullable=False, index=True)  # booking_com, expedia
+    channel_code = db.Column(db.String(32), db.ForeignKey('supported_channels.code'), nullable=False, index=True)
     status = db.Column(db.String(20), nullable=False, default='inactive')  # inactive, active, error
     credentials_json = db.Column(db.JSON, nullable=False, default=dict)
     settings_json = db.Column(db.JSON, nullable=False, default=dict)
@@ -199,4 +198,38 @@ class ChannelMessageLog(db.Model):
             'response_body': self.response_body,
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SupportedChannel(db.Model):
+    __tablename__ = 'supported_channels'
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(32), unique=True, nullable=False)  # e.g., 'booking_com'
+    name = db.Column(db.String(64), unique=True, nullable=False)  # e.g., 'Booking.com'
+    logo = db.Column(db.String(32))  # e.g., '🏨'
+    is_active = db.Column(db.Boolean, default=True)
+
+    @staticmethod
+    def insert_channels():
+        # Mapping: { 'Name': ['code', 'logo'] }
+        channels = {
+            'Booking.com': ['booking_com', '🏨'],
+            'Expedia': ['expedia', '✈️']
+        }
+
+        for name, data in channels.items():
+            channel = SupportedChannel.query.filter_by(code=data[0]).first()
+            if channel is None:
+                channel = SupportedChannel(name=name, code=data[0], logo=data[1])
+            db.session.add(channel)
+        db.session.commit()
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'code': self.code,
+            'name': self.name,
+            'logo': self.logo,
+            'is_active': self.is_active
         }

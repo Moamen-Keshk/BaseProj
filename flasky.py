@@ -32,6 +32,8 @@ from app.api.models import (
     BookingStatus,
 )
 
+from app.api.channel_manager.models import SupportedChannel
+
 
 @app.shell_context_processor
 def make_shell_context():
@@ -47,6 +49,7 @@ def make_shell_context():
         PaymentStatus=PaymentStatus,
         BookingStatus=BookingStatus,
         Category=Category,
+        SupportedChannel=SupportedChannel
     )
 
 
@@ -112,5 +115,6 @@ def deploy():
     PaymentStatus.insert_status()
     BookingStatus.insert_status()
     Category.insert_categories()
+    SupportedChannel.insert_channels()
 
     print('Deployment tasks completed successfully.')

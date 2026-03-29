@@ -10,6 +10,7 @@ from app.api.channel_manager.models import (
     ChannelRatePlanMap,
     ChannelSyncJob,
     ChannelMessageLog,
+    SupportedChannel
 )
 
 
@@ -642,3 +643,36 @@ def expedia_webhook():
     SyncDispatcher.queue_reservation_pull(property_id=property_id, channel_code='expedia',
                                           cursor={"payload": raw_payload})
     return make_response(jsonify({"status": "acknowledged"})), 201
+
+
+@channel_manager.route('/supported-channels', methods=['GET'])
+def get_supported_channels():
+    """Fetch all active supported channels."""
+    channels = SupportedChannel.query.filter_by(is_active=True).all()
+    return jsonify([channel.to_json() for channel in channels]), 201
+
+
+@channel_manager.route('/supported-channels', methods=['POST'])
+def add_supported_channel():
+    """Add a new supported channel from the frontend."""
+    data = request.get_json()
+
+    # Basic validation
+    if not data or not data.get('name') or not data.get('code'):
+        return jsonify({'error': 'Name and code are required'}), 400
+
+    # Check if code already exists to prevent duplicate entries
+    if SupportedChannel.query.filter_by(code=data['code']).first():
+        return jsonify({'error': 'Channel with this code already exists'}), 409
+
+    new_channel = SupportedChannel(
+        name=data['name'],
+        code=data['code'],
+        logo=data.get('logo', '🔗'),  # Default logo if none provided
+        is_active=data.get('is_active', True)
+    )
+
+    db.session.add(new_channel)
+    db.session.commit()
+
+    return jsonify(new_channel.to_json()), 201
