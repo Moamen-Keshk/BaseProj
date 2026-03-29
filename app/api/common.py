@@ -41,7 +41,7 @@ def avatar():
             'status': 'success',
             'data': user.gravatar(size=18)
         }
-        return make_response(jsonify(responseObject)), 200
+        return make_response(jsonify(responseObject)), 201
     responseObject = {
         'status': 'fail',
         'message': resp
@@ -57,7 +57,7 @@ def notifications_count():
             'status': 'success',
             'data': Notification.query.filter_by(to_user=uid, is_read=False).count()
         }
-        return make_response(jsonify(responseObject)), 200
+        return make_response(jsonify(responseObject)), 201
     responseObject = {
         'status': 'fail',
         'message': uid
@@ -119,7 +119,7 @@ def order_list(status_id):
                 'data': orders_list,
                 'page': 0
             }
-            return make_response(jsonify(responseObject)), 200
+            return make_response(jsonify(responseObject)), 201
         except Exception as e:
             logging.exception(e)
             responseObject = {
@@ -144,7 +144,7 @@ def order_detail(order_id):
                 'data': orders_detail,
                 'page': 0
             }
-            return make_response(jsonify(responseObject)), 200
+            return make_response(jsonify(responseObject)), 201
         except Exception as e:
             logging.exception(e)
             responseObject = {
@@ -174,7 +174,7 @@ def advance_orders():
                 'status': 'success',
                 'page': 0
             }
-            return make_response(jsonify(responseObject)), 200
+            return make_response(jsonify(responseObject)), 201
         except Exception as e:
             logging.exception(e)
             responseObject = {
@@ -203,7 +203,7 @@ def edit_profile():
             'status': 'success',
             'message': 'Your profile has been updated.'
         }
-        return make_response(jsonify(responseObject)), 200
+        return make_response(jsonify(responseObject)), 201
     else:
         responseObject = {
             'status': 'fail',

@@ -41,6 +41,9 @@ def process_reservation_pull_job(job_id: int):
         for reservation in result.get('reservations', []):
             ReservationImportService.import_one(connection, reservation)
 
+        from app.api.channel_manager.adapters.sanitizer import PayloadSanitizer
+        safe_response_body = PayloadSanitizer.mask_xml_credit_cards(result.get('raw_body', ''))
+
         log = ChannelMessageLog(
             property_id=job.property_id,
             channel_code=job.channel_code,
@@ -49,7 +52,7 @@ def process_reservation_pull_job(job_id: int):
             related_job_id=job.id,
             http_status=result.get('http_status'),
             success=True,
-            response_body=result.get('raw_body'),
+            response_body=safe_response_body
         )
         db.session.add(log)
 

@@ -37,9 +37,9 @@ class BookingComAdapter(BaseChannelAdapter):
         client = BookingComClient(connection)
         raw_response = client.fetch_reservations(cursor=cursor)
 
-        reservations = BookingComParser.parse_reservations(
-            property_id=connection.property_id,
-            raw_response=raw_response.get('body') or '',
+        reservations = BookingComParser.parse_reservation(
+            xml_string=raw_response.get('body') or '',
+            property_id=connection.property_id
         )
 
         return {
@@ -66,3 +66,19 @@ class BookingComAdapter(BaseChannelAdapter):
             'response_body': response.get('body'),
             'http_status': response.get('status_code'),
         }
+
+    def fetch_external_rooms(self, connection) -> list[dict]:
+        # TODO: Implement actual Booking.com API call (e.g., RoomList request)
+        # Mocking the response for your frontend UI mapping dropdowns
+        return [
+            {"id": "1001", "name": "Standard Double Room", "capacity": 2},
+            {"id": "1002", "name": "Deluxe King Suite", "capacity": 2},
+            {"id": "1003", "name": "Family Room with Sea View", "capacity": 4}
+        ]
+
+    def fetch_external_rate_plans(self, connection) -> list[dict]:
+        # TODO: Implement actual Booking.com API call (e.g., RatePlanList request)
+        return [
+            {"id": "BAR", "name": "Best Available Rate", "pricing_model": "PerDay"},
+            {"id": "NRF", "name": "Non-Refundable Rate", "pricing_model": "PerDay"}
+        ]

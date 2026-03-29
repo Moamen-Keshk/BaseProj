@@ -24,3 +24,13 @@ class BaseChannelAdapter(ABC):
         payload: dict | None = None,
     ) -> dict:
         raise NotImplementedError
+
+    @abstractmethod
+    def fetch_external_rooms(self, connection) -> list[dict]:
+        """Fetches a list of rooms configured on the OTA."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_external_rate_plans(self, connection) -> list[dict]:
+        """Fetches a list of rate plans configured on the OTA."""
+        raise NotImplementedError

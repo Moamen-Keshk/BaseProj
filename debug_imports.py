@@ -1,5 +1,4 @@
 import traceback
-import sys
 import os
 from flask import Blueprint, Flask
 

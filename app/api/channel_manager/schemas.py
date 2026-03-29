@@ -35,3 +35,31 @@ class ChannelReservationPayload:
     external_rate_plan_id: Optional[str]
     status: str
     raw_payload: dict | str
+
+@dataclass
+class PaymentInfo:
+    card_type: str
+    card_number: str
+    card_holder: str
+    expiration_date: str
+    cvc: Optional[str]
+    is_vcc: bool = False
+    vcc_activation_date: Optional[date] = None
+
+@dataclass
+class ChannelReservationPayload:
+    channel_code: str
+    external_reservation_id: str
+    external_version: Optional[str]
+    property_id: int
+    guest_name: Optional[str]
+    guest_email: Optional[str]
+    checkin_date: date
+    checkout_date: date
+    total_amount: Optional[Decimal]
+    currency: Optional[str]
+    external_room_id: Optional[str]
+    external_rate_plan_id: Optional[str]
+    status: str
+    raw_payload: dict | str
+    payment_info: Optional[PaymentInfo] = None  # <-- Added this field

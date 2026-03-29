@@ -1,1 +1,3 @@
 # Celery task package for channel manager
+# existing imports...
+from .alert_monitor import monitor_channel_health

@@ -20,7 +20,7 @@ class FlaskClientTestCase(unittest.TestCase):
 
     def test_home_page(self):
         response = self.client.get('/')
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 201)
         self.assertTrue('Stranger' in response.get_data(as_text=True))
 
     def test_register_and_login(self):
@@ -38,7 +38,7 @@ class FlaskClientTestCase(unittest.TestCase):
             'email': 'john@example.com',
             'password': 'cat'
         }, follow_redirects=True)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 201)
         self.assertTrue(re.search('Hello,\s+john!',
                                   response.get_data(as_text=True)))
         self.assertTrue(
@@ -51,13 +51,13 @@ class FlaskClientTestCase(unittest.TestCase):
         response = self.client.get('/auth/confirm/{}'.format(token),
                                    follow_redirects=True)
         user.confirm(token)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 201)
         self.assertTrue(
             'You have confirmed your account' in response.get_data(
                 as_text=True))
 
         # log out
         response = self.client.get('/auth/logout', follow_redirects=True)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 201)
         self.assertTrue('You have been logged out' in response.get_data(
             as_text=True))

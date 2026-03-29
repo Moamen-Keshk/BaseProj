@@ -28,7 +28,7 @@ def new_order():
                 'status': 'success',
                 'message': 'Order submitted.'
             }
-            return make_response(jsonify(responseObject)), 200
+            return make_response(jsonify(responseObject)), 201
         except Exception as e:
             logging.exception(e)
             responseObject = {

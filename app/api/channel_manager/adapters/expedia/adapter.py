@@ -22,7 +22,7 @@ class ExpediaAdapter(BaseChannelAdapter):
             'success': True,
             'request_body': None,
             'response_body': None,
-            'http_status': 200,
+            'http_status': 201,
             'count': len(ari_updates),
         }
 
@@ -31,7 +31,7 @@ class ExpediaAdapter(BaseChannelAdapter):
             'reservations': [],
             'next_cursor': None,
             'raw_body': None,
-            'http_status': 200,
+            'http_status': 201,
         }
 
     def acknowledge_reservation(
@@ -43,5 +43,19 @@ class ExpediaAdapter(BaseChannelAdapter):
         return {
             'success': True,
             'response_body': None,
-            'http_status': 200,
+            'http_status': 201,
         }
+
+    def fetch_external_rooms(self, connection) -> list[dict]:
+        # TODO: Implement Expedia Product API call to fetch RoomTypes
+        return [
+            {"id": "EXP-RM-201", "name": "Standard Room", "capacity": 2},
+            {"id": "EXP-RM-202", "name": "Executive Suite", "capacity": 3}
+        ]
+
+    def fetch_external_rate_plans(self, connection) -> list[dict]:
+        # TODO: Implement Expedia Product API call to fetch RatePlans
+        return [
+            {"id": "EXP-RP-1", "name": "Standard Rate", "pricing_model": "OccupancyBased"},
+            {"id": "EXP-RP-2", "name": "Bed & Breakfast", "pricing_model": "OccupancyBased"}
+        ]

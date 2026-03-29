@@ -87,7 +87,7 @@ def password_reset_request():
             'status': 'success',
             'message': 'Reset request submitted.'
         }
-        return make_response(jsonify(response_object)), 200
+        return make_response(jsonify(response_object)), 201
     else:
         response_object = {
             'status': 'fail',
@@ -104,7 +104,7 @@ def password_reset(token):
             'status': 'success',
             'message': 'Your password has been updated.'
         }
-        return make_response(jsonify(response_object)), 200
+        return make_response(jsonify(response_object)), 201
     else:
         return redirect(os.environ.get('BASE_LINK') + '/home')
 
@@ -129,7 +129,7 @@ def change_email_request():
                 'status': 'success',
                 'message': 'An email with instructions to confirm your new email address has been sent to you.'
             }
-            return make_response(jsonify(response_object)), 200
+            return make_response(jsonify(response_object)), 201
         else:
             response_object = {
                 'status': 'invalid',
@@ -168,7 +168,7 @@ def change_password():
                 'status': 'success',
                 'message': 'Your password has been updated.'
             }
-            return make_response(jsonify(response_object)), 200
+            return make_response(jsonify(response_object)), 201
         else:
             response_object = {
                 'status': 'invalid',

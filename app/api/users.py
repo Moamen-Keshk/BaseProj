@@ -13,7 +13,7 @@ def get_user():
             'status': 'success',
             'data': user.to_json()
         }
-        return make_response(jsonify(responseObject)), 200
+        return make_response(jsonify(responseObject)), 201
     responseObject = {
         'status': 'fail',
         'message': resp

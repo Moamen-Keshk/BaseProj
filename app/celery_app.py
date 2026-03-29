@@ -56,6 +56,20 @@ def make_celery() -> Celery:
         ),
     )
 
+    from celery.schedules import crontab
+
+    # Assuming you already have a celery instance defined
+    # celery = Celery(...)
+
+    celery.conf.beat_schedule = {
+        # Existing scheduled tasks... e.g., 'dispatch-pending-jobs': {...}
+
+        'monitor-channel-health-hourly': {
+            'task': 'app.api.channel_manager.tasks.alert_monitor.monitor_channel_health',
+            'schedule': crontab(minute=0),  # Runs at the top of every hour
+        },
+    }
+
     return celery_app
 
 
