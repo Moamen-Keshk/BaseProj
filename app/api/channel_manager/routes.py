@@ -645,34 +645,63 @@ def expedia_webhook():
     return make_response(jsonify({"status": "acknowledged"})), 201
 
 
-@channel_manager.route('/supported-channels', methods=['GET'])
+@channel_manager.route('/supported_channels', methods=['GET'])
 def get_supported_channels():
-    """Fetch all active supported channels."""
-    channels = SupportedChannel.query.filter_by(is_active=True).all()
-    return jsonify([channel.to_json() for channel in channels]), 201
+    try:
+        # 1. Added Authentication check
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+
+        channels = SupportedChannel.query.filter_by(is_active=True).all()
+
+        # 2. Standardized Response Format
+        return make_response(jsonify({
+            'status': 'success',
+            'data': [channel.to_json() for channel in channels]
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in get_supported_channels: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch channels.'})), 500
 
 
-@channel_manager.route('/supported-channels', methods=['POST'])
+@channel_manager.route('/supported_channels', methods=['POST'])
 def add_supported_channel():
-    """Add a new supported channel from the frontend."""
-    data = request.get_json()
+    try:
+        # 1. Added Authentication check
+        user_id = get_current_user()
+        if not isinstance(user_id, str):
+            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
 
-    # Basic validation
-    if not data or not data.get('name') or not data.get('code'):
-        return jsonify({'error': 'Name and code are required'}), 400
+        data = request.get_json()
 
-    # Check if code already exists to prevent duplicate entries
-    if SupportedChannel.query.filter_by(code=data['code']).first():
-        return jsonify({'error': 'Channel with this code already exists'}), 409
+        # Basic validation
+        if not data or not data.get('name') or not data.get('code'):
+            return make_response(jsonify({'status': 'error', 'message': 'Name and code are required'})), 400
 
-    new_channel = SupportedChannel(
-        name=data['name'],
-        code=data['code'],
-        logo=data.get('logo', '🔗'),  # Default logo if none provided
-        is_active=data.get('is_active', True)
-    )
+        # Check if code already exists
+        if SupportedChannel.query.filter_by(code=data['code']).first():
+            return make_response(jsonify({'status': 'error', 'message': 'Channel with this code already exists'})), 409
 
-    db.session.add(new_channel)
-    db.session.commit()
+        new_channel = SupportedChannel(
+            name=data['name'],
+            code=data['code'],
+            logo=data.get('logo', '🔗'),
+            is_active=data.get('is_active', True)
+        )
 
-    return jsonify(new_channel.to_json()), 201
+        db.session.add(new_channel)
+        db.session.commit()
+
+        # 2. Standardized Response Format
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Supported channel added successfully.',
+            'data': new_channel.to_json()
+        })), 201
+
+    except Exception as e:
+        logging.exception("Error in add_supported_channel: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to add channel.'})), 500

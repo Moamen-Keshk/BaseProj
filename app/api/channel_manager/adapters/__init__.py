@@ -1,10 +1,12 @@
-from app.api.channel_manager.adapters.booking_com.adapter import BookingComAdapter
-from app.api.channel_manager.adapters.expedia.adapter import ExpediaAdapter
+from .booking_com.adapter import BookingComAdapter
+from .expedia.adapter import ExpediaAdapter
+from .dummy_adapter import DummyAdapter
 
 
 ADAPTERS = {
     'booking_com': BookingComAdapter(),
     'expedia': ExpediaAdapter(),
+    'dummy_ota': DummyAdapter()
 }
 
 
