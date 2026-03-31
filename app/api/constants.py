@@ -73,3 +73,23 @@ class Constants:
             3: 'Twin',
             4: 'Triple'
     }
+
+    AccountStatusCoding = {
+        'Pending': 1,
+        'Active': 2,
+        'Suspended': 3,
+        'Cancelled': 4,
+        1: 'Pending',
+        2: 'Active',
+        3: 'Suspended',
+        4: 'Cancelled'
+            }
+
+    # Hierarchy logic: Higher numbers have authority over lower numbers
+    RoleHierarchy = {
+        'Super Admin': 50,
+        'Property Admin': 40,
+        'Revenue Manager': 30,
+        'Front Desk': 20,
+        'Housekeeping': 10
+            }

@@ -59,14 +59,16 @@ class Role(db.Model):
                 'desc': 'Manages rates, channels, and availability',
                 'perms': [
                     PMSPermission.VIEW_BOOKINGS, PMSPermission.VIEW_RATES,
-                    PMSPermission.MANAGE_RATES, PMSPermission.MANAGE_CHANNELS
+                    PMSPermission.MANAGE_RATES, PMSPermission.MANAGE_CHANNELS,
+                    PMSPermission.MANAGE_STAFF  # <--- ADDED
                 ]
             },
             'Front Desk': {
                 'desc': 'Manages daily bookings and room statuses',
                 'perms': [
                     PMSPermission.VIEW_BOOKINGS, PMSPermission.MANAGE_BOOKINGS,
-                    PMSPermission.VIEW_RATES, PMSPermission.UPDATE_ROOM_STATUS
+                    PMSPermission.VIEW_RATES, PMSPermission.UPDATE_ROOM_STATUS,
+                    PMSPermission.MANAGE_STAFF  # <--- ADDED
                 ]
             },
             'Housekeeping': {
@@ -89,6 +91,7 @@ class UserPropertyAccess(db.Model):
     user_id = db.Column(db.String(32), db.ForeignKey('users.uid'), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
+    account_status_id = db.Column(db.Integer, default=1)
 
     # Ensure a user only has one role per property
     __table_args__ = (

@@ -49,6 +49,14 @@ def require_permission(required_permission):
                 return make_response(
                     jsonify({'status': 'fail', 'message': 'Forbidden: You are not assigned to this property.'})), 403
 
+            # NEW: Ensure the account has been approved/activated by a superior
+            if access.account_status_id != 2:  # 2 = Active
+                status_name = Constants.AccountStatusCoding.get(access.account_status_id, "Unknown")
+                return make_response(jsonify({
+                    'status': 'fail',
+                    'message': f'Forbidden: Your account is currently {status_name}.'
+                })), 403
+
             # 5. Check if the assigned role has the specific permission
             if required_permission not in access.role.permissions_json:
                 return make_response(jsonify({
