@@ -1,0 +1,13 @@
+Hello,
+
+You have been invited by {{ invited_by }} to join the staff at {{ property_name }}.
+
+Your assigned role will be: {{ role_name }}.
+
+To accept this invitation and activate your account, please register on our app and enter the following Invite Code when prompted:
+
+Invite Code: {{ invite_code }}
+
+If you already have an account, please contact your manager.
+
+Welcome to the team!

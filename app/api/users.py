@@ -1,6 +1,6 @@
 from flask import make_response, jsonify, request
 from . import api
-from app.api.models import User, UserPropertyAccess, Role, Property
+from app.api.models import User, UserPropertyAccess, Role, Property, PropertyInvite
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
 from app.api.constants import Constants
@@ -129,3 +129,50 @@ def update_staff_status(property_id, target_user_uid):
     )
 
     return make_response(jsonify({'status': 'success', 'message': f'Account status updated to {status_name}.'})), 200
+
+
+@api.route('/properties/<int:property_id>/invites', methods=['POST'])
+@require_permission('manage_staff')
+def create_invite(property_id):
+    """Generates an invitation code and emails it to the future staff member."""
+    current_uid = get_current_user()
+    current_user = User.query.get(current_uid)
+
+    email = request.json.get('email')
+    role_id = request.json.get('role_id')
+
+    role = Role.query.get(role_id)
+    target_property = Property.query.get(property_id)
+
+    if not role or not email:
+        return make_response(jsonify({'status': 'fail', 'message': 'Email and Role are required.'})), 400
+
+    # HIERARCHY CHECK: Manager can only invite roles below them
+    current_user_rank = get_user_rank(current_user, property_id)
+    target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
+
+    if current_user_rank <= target_role_rank:
+        return make_response(
+            jsonify({'status': 'fail', 'message': 'Forbidden: Cannot invite roles at or above your level.'})), 403
+
+    # Generate the invite
+    invite = PropertyInvite(property_id=property_id, role_id=role.id, email=email)
+    db.session.add(invite)
+    db.session.commit()
+
+    # ---> SEND THE INVITE EMAIL <---
+    send_email(
+        to=email,
+        subject=f'You have been invited to join {target_property.name}',
+        template='mail/staff_invite',  # You will need to create this template
+        property_name=target_property.name,
+        role_name=role.name,
+        invite_code=invite.invite_code,
+        invited_by=current_user.username
+    )
+
+    return make_response(jsonify({
+        'status': 'success',
+        'message': f'Invite sent to {email}.',
+        'invite_code': invite.invite_code  # Returning it just in case the frontend wants to display it
+    })), 201

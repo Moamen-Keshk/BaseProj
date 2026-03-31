@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timezone, date
 import logging
 from itsdangerous import (URLSafeTimedSerializer
                           as Serializer, BadSignature, SignatureExpired)
@@ -989,3 +989,19 @@ class Block(db.Model):
         return block
 
 
+import secrets
+from datetime import datetime, timedelta
+
+
+class PropertyInvite(db.Model):
+    __tablename__ = 'property_invites'
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    invite_code = db.Column(db.String(32), unique=True, nullable=False, default=lambda: secrets.token_hex(8))
+    is_used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+
+    property = db.relationship('Property')
+    role = db.relationship('Role')

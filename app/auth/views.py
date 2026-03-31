@@ -5,7 +5,8 @@ from flask import make_response, jsonify, redirect, request
 from flask.views import MethodView
 
 from app.api.email import send_email
-from app.api.models import User
+# ---> IMPORTED PropertyInvite & UserPropertyAccess <---
+from app.api.models import User, PropertyInvite, UserPropertyAccess
 from . import auth
 from .utils import get_current_user
 
@@ -31,14 +32,41 @@ class RegisterAPI(MethodView):
                 return make_response(jsonify(response_object)), 202
 
             try:
+                # Capture uid first so we can use it for UserPropertyAccess if needed
+                new_uid = get_current_user()
+
                 user = User(
-                    uid=get_current_user(),
+                    uid=new_uid,
                     username=post_data.get('username'),
                     email=post_data.get('email'),
                     password=post_data.get('password'),
                 )
 
                 db.session.add(user)
+
+                # ---> NEW: CHECK FOR INVITE CODE <---
+                invite_code = post_data.get('invite_code')
+                if invite_code:
+                    invite = PropertyInvite.query.filter_by(
+                        invite_code=invite_code,
+                        email=user.email,
+                        is_used=False
+                    ).first()
+
+                    if invite:
+                        # Consume the invite
+                        invite.is_used = True
+
+                        # Automatically assign the role and make them ACTIVE (2)
+                        new_access = UserPropertyAccess(
+                            user_id=new_uid,
+                            property_id=invite.property_id,
+                            role_id=invite.role_id,
+                            account_status_id=2  # Active immediately because a manager invited them
+                        )
+                        db.session.add(new_access)
+
+                # Commit both the new User and their Role Access (if applicable) at the same time
                 db.session.commit()
 
                 response_object = {
@@ -49,6 +77,7 @@ class RegisterAPI(MethodView):
 
             except Exception as e:
                 logging.exception(e)
+                db.session.rollback()  # Added rollback to prevent database locks on crash
                 response_object = {
                     'status': 'error',
                     'message': 'Some error occurred. Please try again.'
