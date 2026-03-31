@@ -2,7 +2,10 @@ from flask import Blueprint
 
 api = Blueprint('api', __name__)
 
-from app.api.models import Permission
+# 1. Import the new PMS-specific permissions
+from app.api.models import PMSPermission
+
+# 2. Keep your existing route imports
 from . import (
     common,
     floors,
@@ -17,7 +20,7 @@ from . import (
     blocks
 )
 
-
+# 3. Inject the new PMSPermission into your templates
 @api.app_context_processor
 def inject_permissions():
-    return dict(Permission=Permission)
+    return dict(PMSPermission=PMSPermission)

@@ -1,10 +1,9 @@
 from datetime import datetime, timedelta, timezone, date
-import hashlib
 import logging
 from itsdangerous import (URLSafeTimedSerializer
                           as Serializer, BadSignature, SignatureExpired)
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import current_app, url_for
+from flask import current_app
 from flask_login import UserMixin, AnonymousUserMixin
 from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
@@ -24,65 +23,81 @@ def parse_date(value):
     return None
 
 
-class Permission:
-    FOLLOW = 1
-    COMMENT = 2
-    WRITE = 4
-    MODERATE = 8
-    ADMIN = 16
+# 1. Define PMS-Specific Permissions
+class PMSPermission:
+    VIEW_BOOKINGS = 'view_bookings'
+    MANAGE_BOOKINGS = 'manage_bookings'
+    VIEW_RATES = 'view_rates'
+    MANAGE_RATES = 'manage_rates'
+    MANAGE_CHANNELS = 'manage_channels'
+    UPDATE_ROOM_STATUS = 'update_room_status'
+    MANAGE_STAFF = 'manage_staff'
+    MANAGE_PROPERTY = 'manage_property'
 
 
 class Role(db.Model):
     __tablename__ = 'roles'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True)
-    default = db.Column(db.Boolean, default=False, index=True)
-    permissions = db.Column(db.Integer)
-    users = db.relationship('User', backref='role', lazy='dynamic')
-
-    def __init__(self, **kwargs):
-        super(Role, self).__init__(**kwargs)
-        if self.permissions is None:
-            self.permissions = 0
+    description = db.Column(db.String(128))
+    # Storing permissions as a JSON list of strings
+    permissions_json = db.Column(db.JSON, default=list)
 
     @staticmethod
     def insert_roles():
         roles = {
-            'User': [Permission.FOLLOW, Permission.COMMENT, Permission.WRITE],
-            'Moderator': [Permission.FOLLOW, Permission.COMMENT,
-                          Permission.WRITE, Permission.MODERATE],
-            'Administrator': [Permission.FOLLOW, Permission.COMMENT,
-                              Permission.WRITE, Permission.MODERATE,
-                              Permission.ADMIN],
+            'Property Admin': {
+                'desc': 'Full control over a specific property',
+                'perms': [
+                    PMSPermission.VIEW_BOOKINGS, PMSPermission.MANAGE_BOOKINGS,
+                    PMSPermission.VIEW_RATES, PMSPermission.MANAGE_RATES,
+                    PMSPermission.MANAGE_CHANNELS, PMSPermission.UPDATE_ROOM_STATUS,
+                    PMSPermission.MANAGE_STAFF, PMSPermission.MANAGE_PROPERTY
+                ]
+            },
+            'Revenue Manager': {
+                'desc': 'Manages rates, channels, and availability',
+                'perms': [
+                    PMSPermission.VIEW_BOOKINGS, PMSPermission.VIEW_RATES,
+                    PMSPermission.MANAGE_RATES, PMSPermission.MANAGE_CHANNELS
+                ]
+            },
+            'Front Desk': {
+                'desc': 'Manages daily bookings and room statuses',
+                'perms': [
+                    PMSPermission.VIEW_BOOKINGS, PMSPermission.MANAGE_BOOKINGS,
+                    PMSPermission.VIEW_RATES, PMSPermission.UPDATE_ROOM_STATUS
+                ]
+            },
+            'Housekeeping': {
+                'desc': 'Can only update room statuses',
+                'perms': [PMSPermission.UPDATE_ROOM_STATUS]
+            },
         }
-        default_role = 'User'
-        for r in roles:
-            role = Role.query.filter_by(name=r).first()
+        for role_name, role_data in roles.items():
+            role = Role.query.filter_by(name=role_name).first()
             if role is None:
-                role = Role(name=r)
-            role.reset_permissions()
-            for perm in roles[r]:
-                role.add_permission(perm)
-            role.default = (role.name == default_role)
+                role = Role(name=role_name)
+            role.description = role_data['desc']
+            role.permissions_json = role_data['perms']
             db.session.add(role)
         db.session.commit()
 
-    def add_permission(self, perm):
-        if not self.has_permission(perm):
-            self.permissions += perm
+class UserPropertyAccess(db.Model):
+    __tablename__ = 'user_property_access'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(32), db.ForeignKey('users.uid'), nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
 
-    def remove_permission(self, perm):
-        if self.has_permission(perm):
-            self.permissions -= perm
+    # Ensure a user only has one role per property
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'property_id', name='uq_user_property_role'),
+    )
 
-    def reset_permissions(self):
-        self.permissions = 0
-
-    def has_permission(self, perm):
-        return self.permissions & perm == perm
-
-    def __repr__(self):
-        return '<Role %r>' % self.name
+    user = db.relationship('User', backref=db.backref('property_accesses', lazy='dynamic'))
+    property = db.relationship('Property', backref=db.backref('staff_access', lazy='dynamic'))
+    role = db.relationship('Role')
 
 
 class User(UserMixin, db.Model):
@@ -90,7 +105,10 @@ class User(UserMixin, db.Model):
     uid = db.Column(db.String(32), primary_key=True)
     email = db.Column(db.String(64), unique=True, index=True)
     username = db.Column(db.String(64), unique=True, index=True)
-    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
+
+    # Global Super Admin (Replaces the old global role)
+    is_super_admin = db.Column(db.Boolean, default=False)
+
     password_hash = db.Column(db.String(128))
     confirmed = db.Column(db.Boolean, default=False)
     name = db.Column(db.String(64))
@@ -99,18 +117,22 @@ class User(UserMixin, db.Model):
     member_since = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     last_seen = db.Column(db.DateTime(), default=datetime.now(timezone.utc))
     avatar_hash = db.Column(db.String(32))
+
     orders = db.relationship('Order', backref='creator', lazy='dynamic')
     notifications = db.relationship('Notification', backref='to_user_uid', lazy='dynamic')
 
     def __init__(self, **kwargs):
         super(User, self).__init__(**kwargs)
-        if self.role is None:
-            if self.email == current_app.config['FLASKY_ADMIN']:
-                self.role = Role.query.filter_by(name='Administrator').first()
-            if self.role is None:
-                self.role = Role.query.filter_by(default=True).first()
+        # Automatically grant Super Admin if email matches the config
+        if self.email == current_app.config.get('FLASKY_ADMIN'):
+            self.is_super_admin = True
+
         if self.email is not None and self.avatar_hash is None:
             self.avatar_hash = self.gravatar_hash()
+
+    # Flask-Login requires a get_id method that returns a string of the primary key
+    def get_id(self):
+        return str(self.uid)
 
     @property
     def password(self):
@@ -123,9 +145,11 @@ class User(UserMixin, db.Model):
     def verify_password(self, password):
         return check_password_hash(self.password_hash, password)
 
+    # --- Token Methods (Updated to use self.uid instead of self.id) ---
+
     def generate_confirmation_token(self):
         s = Serializer(current_app.config['SECRET_KEY'])
-        return s.dumps({'confirm': self.id}).decode('utf-8')
+        return s.dumps({'confirm': self.uid}).decode('utf-8')
 
     @staticmethod
     def verify_confirmation_token(token):
@@ -133,23 +157,10 @@ class User(UserMixin, db.Model):
         try:
             data = s.loads(token)
         except SignatureExpired:
-            return None  # valid token, but expired
+            return None
         except BadSignature:
-            return None  # invalid token
-        user = User.query.get(data['confirm'])
-        return user
-
-    @staticmethod
-    def verify_change_email_token(token):
-        s = Serializer(current_app.config['SECRET_KEY'])
-        try:
-            data = s.loads(token)
-        except SignatureExpired:
-            return None  # valid token, but expired
-        except BadSignature:
-            return None  # invalid token
-        user = User.query.get(data['change_email'])
-        return user
+            return None
+        return User.query.get(data['confirm'])
 
     def confirm(self, token):
         s = Serializer(current_app.config['SECRET_KEY'])
@@ -158,7 +169,7 @@ class User(UserMixin, db.Model):
         except Exception as e:
             logging.exception(e)
             return False
-        if data.get('confirm') != self.id:
+        if data.get('confirm') != self.uid:
             return False
         self.confirmed = True
         db.session.add(self)
@@ -166,7 +177,7 @@ class User(UserMixin, db.Model):
 
     def generate_reset_token(self):
         s = Serializer(current_app.config['SECRET_KEY'])
-        return s.dumps({'reset': self.id}).decode('utf-8')
+        return s.dumps({'reset': self.uid}).decode('utf-8')
 
     @staticmethod
     def reset_password(token, new_password):
@@ -185,8 +196,7 @@ class User(UserMixin, db.Model):
 
     def generate_email_change_token(self, new_email):
         s = Serializer(current_app.config['SECRET_KEY'])
-        return s.dumps(
-            {'change_email': self.id, 'new_email': new_email}).decode('utf-8')
+        return s.dumps({'change_email': self.uid, 'new_email': new_email}).decode('utf-8')
 
     def change_email(self, token):
         s = Serializer(current_app.config['SECRET_KEY'])
@@ -195,7 +205,7 @@ class User(UserMixin, db.Model):
         except Exception as e:
             logging.exception(e)
             return False
-        if data.get('change_email') != self.id:
+        if data.get('change_email') != self.uid:
             return False
         new_email = data.get('new_email')
         if new_email is None:
@@ -207,42 +217,9 @@ class User(UserMixin, db.Model):
         db.session.add(self)
         return True
 
-    def can(self, perm):
-        return self.role is not None and self.role.has_permission(perm)
-
-    def is_administrator(self):
-        return self.can(Permission.ADMIN)
-
-    def ping(self):
-        self.last_seen = datetime.now(timezone.utc)
-        db.session.add(self)
-
-    def gravatar_hash(self):
-        return hashlib.md5(self.email.lower().encode('utf-8')).hexdigest()
-
-    def gravatar(self, size=100, default='identicon', rating='g'):
-        url = 'https://secure.gravatar.com/avatar'
-        av_hash = self.avatar_hash or self.gravatar_hash()
-        return '{url}/{hash}?s={size}&d={default}&r={rating}'.format(
-            url=url, hash=av_hash, size=size, default=default, rating=rating)
-
-    def to_json(self):
-        json_user = {
-            'username': self.username,
-            'email': self.email,
-            'member_since': self.member_since,
-            'posts_url': url_for('api.get_user_posts', id=self.id),
-            'post_count': self.posts.count(),
-            'profile_avatar': self.gravatar(256),
-            'name': self.name,
-            'location': self.location,
-            'about_me': self.about_me
-        }
-        return json_user
-
     def generate_auth_token(self):
         s = Serializer(current_app.config['SECRET_KEY'])
-        return s.dumps({'id': self.id}).decode('utf-8')
+        return s.dumps({'id': self.uid}).decode('utf-8')
 
     @staticmethod
     def verify_auth_token(token):
@@ -250,14 +227,20 @@ class User(UserMixin, db.Model):
         try:
             data = s.loads(token)
         except SignatureExpired:
-            return None  # valid token, but expired
+            return None
         except BadSignature:
-            return None  # invalid token
-        user = User.query.get(data['id'])
-        return user
+            return None
+        return User.query.get(data['id'])
 
-    def __repr__(self):
-        return '<User %r>' % self.username
+    # --- Utility Methods ---
+
+    def ping(self):
+        # 1. Update the timestamp to RIGHT NOW
+        self.last_seen = datetime.now(timezone.utc)
+
+        # 2. Add the user to the database session so it saves
+        db.session.add(self)
+        db.session.commit() # Add this if you want it to save to the database immediately
 
 
 class AnonymousUser(AnonymousUserMixin):

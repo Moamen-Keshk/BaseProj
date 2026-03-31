@@ -1,18 +1,28 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
+
+# 1. LOAD THE .ENV FILE ABSOLUTELY FIRST using find_dotenv()
+# This built-in function automatically searches up the directory tree until it finds a .env file
+env_path = find_dotenv(usecwd=True)
+if env_path:
+    print(f"LOADING .ENV FROM: {env_path}")
+    load_dotenv(env_path, override=True)  # override=True forces it to replace existing vars
+else:
+    print("WARNING: NO .ENV FILE FOUND BY CELERY!")
+
+# 2. NOW WE CAN IMPORT CELERY AND FLASK
 from celery import Celery, Task
-
+from celery.schedules import crontab
 from app import create_app
-
-basedir = os.path.abspath(os.path.dirname(__file__))
-dotenv_path = os.path.join(basedir, ".env")
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path)
 
 
 def make_celery() -> Celery:
     config_name = os.getenv("FLASK_CONFIG") or "default"
+    print(f"CELERY FLASK_CONFIG IS: {config_name}")  # Let's see what config it actually chose
+
     flask_app = create_app(config_name)
+
+    print(f"CELERY DB URL IS: {flask_app.config.get('SQLALCHEMY_DATABASE_URI')}")
 
     class FlaskTask(Task):
         abstract = True
@@ -45,6 +55,11 @@ def make_celery() -> Celery:
                 "task": "app.api.channel_manager.tasks.schedule_pulls.schedule_reservation_pull_jobs",
                 "schedule": 60.0,
             },
+            # Merged your new cron task right in here!
+            "monitor-channel-health-hourly": {
+                "task": "app.api.channel_manager.tasks.alert_monitor.monitor_channel_health",
+                "schedule": crontab(minute=0),
+            },
         },
         imports=(
             "app.api.channel_manager.tasks.push_ari",
@@ -55,20 +70,6 @@ def make_celery() -> Celery:
             "app.api.channel_manager.tasks.retry_jobs",
         ),
     )
-
-    from celery.schedules import crontab
-
-    # Assuming you already have a celery instance defined
-    # celery = Celery(...)
-
-    celery.conf.beat_schedule = {
-        # Existing scheduled tasks... e.g., 'dispatch-pending-jobs': {...}
-
-        'monitor-channel-health-hourly': {
-            'task': 'app.api.channel_manager.tasks.alert_monitor.monitor_channel_health',
-            'schedule': crontab(minute=0),  # Runs at the top of every hour
-        },
-    }
 
     return celery_app
 

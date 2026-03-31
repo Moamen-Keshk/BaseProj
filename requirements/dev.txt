@@ -8,3 +8,4 @@ requests
 urllib3
 celery
 celery-types
+celery[redis]

@@ -42,7 +42,7 @@ def dispatch_pending_channel_jobs(limit: int = 100):
 
     for job in jobs:
         if job.status == 'retrying' and job.next_retry_at:
-            if job.next_retry_at > datetime.now(timezone.utc):
+            if job.next_retry_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
                 continue
 
         _dispatch_job(job)

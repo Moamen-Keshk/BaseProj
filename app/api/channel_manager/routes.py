@@ -1,5 +1,7 @@
 from flask import request, make_response, jsonify
 import logging
+from app.api.decorators import require_permission
+from app.api.models import PMSPermission
 
 from app import db
 from app.auth.utils import get_current_user
@@ -508,12 +510,9 @@ def get_external_rate_plans(connection_id):
 # ==========================================
 
 @channel_manager.route('/connections/<int:connection_id>/bulk_map_rooms', methods=['POST'])
+@require_permission(PMSPermission.MANAGE_CHANNELS)
 def bulk_map_rooms(connection_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
-
         connection = ChannelConnection.query.get(connection_id)
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404

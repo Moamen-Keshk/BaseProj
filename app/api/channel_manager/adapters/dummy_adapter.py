@@ -1,5 +1,6 @@
-# app/api/channel_manager/adapters/dummy_adapter.py
 from app.api.channel_manager.adapters.base import BaseChannelAdapter
+import uuid
+from datetime import datetime, timedelta
 
 class DummyAdapter(BaseChannelAdapter):
     """
@@ -27,13 +28,48 @@ class DummyAdapter(BaseChannelAdapter):
 
     def pull_reservations(self, connection, cursor: dict | None = None) -> dict:
         """
-        Returns a mock dictionary of reservations.
-        We return an empty list to ensure your background pull jobs run successfully without crashing.
+        Returns a mock dictionary containing a fake reservation.
+        Every time this is called, it pretends a new guest just booked a room!
         """
-        print(f"🧪 [MOCK OTA] Pulling reservations for property {connection.property_id}. Cursor: {cursor}")
+        print(f"🧪 [MOCK OTA] Pulling reservations for property {connection.property_id}")
+
+        # Generate a random 6-character booking reference (e.g., DUMMY-A1B2C3)
+        fake_res_id = f"DUMMY-{uuid.uuid4().hex[:6].upper()}"
+
+        # Calculate fake dates (Check-in today, Check-out in 2 days)
+        check_in = datetime.now().strftime("%Y-%m-%d")
+        check_out = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+
+        # Mimic a standard OTA JSON payload
+        fake_reservation = {
+            "external_reservation_id": fake_res_id,
+            "status": "confirmed",
+            "guest": {
+                "first_name": "John",
+                "last_name": "Doe (Test Guest)",
+                "email": "john.test@dummyota.com",
+                "phone": "+15551234567"
+            },
+            "room_stays": [
+                {
+                    # IMPORTANT: This must match the ID of a room you mapped in Flutter!
+                    "external_room_id": "DUMMY-RM-01",
+                    "external_rate_plan_id": "DUMMY-RP-02",
+                    "check_in_date": check_in,
+                    "check_out_date": check_out,
+                    "guests": 2,
+                    "price": 250.00,
+                    "currency": "USD"
+                }
+            ],
+            "total_price": 250.00,
+            "currency": "USD",
+            "booked_at": datetime.now().isoformat()
+        }
+
         return {
-            "reservations": [],
-            "next_cursor": None
+            "reservations": [fake_reservation],
+            "next_cursor": None  # No more pages of reservations to fetch
         }
 
     def acknowledge_reservation(

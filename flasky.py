@@ -22,7 +22,8 @@ migrate = Migrate(app, db)
 from app.api.models import (
     User,
     Role,
-    Permission,
+    PMSPermission,         # <-- Replaced Permission
+    UserPropertyAccess,    # <-- Added new mapping table
     Notification,
     OrderStatus,
     PropertyStatus,
@@ -41,7 +42,8 @@ def make_shell_context():
         db=db,
         User=User,
         Role=Role,
-        Permission=Permission,
+        PMSPermission=PMSPermission,               # <-- Updated
+        UserPropertyAccess=UserPropertyAccess,     # <-- Added
         Notification=Notification,
         OrderStatus=OrderStatus,
         PropertyStatus=PropertyStatus,
