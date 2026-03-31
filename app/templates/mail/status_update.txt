@@ -1,0 +1,9 @@
+Dear {{ user.username }},
+
+There has been an update to your staff account for {{ property_name }}.
+
+Your {{ role_name }} account status is now: {{ status_name }}.
+{% if status_name == 'Active' %}
+You can now log in and access the property management dashboard.
+{% endif %}
+Thank you!

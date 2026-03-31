@@ -1,0 +1,7 @@
+<p>Dear {{ user.username }},</p>
+<p>There has been an update to your staff account for <b>{{ property_name }}</b>.</p>
+<p>Your <b>{{ role_name }}</b> account status is now: <strong>{{ status_name }}</strong>.</p>
+{% if status_name == 'Active' %}
+    <p>You can now log in and access the property management dashboard.</p>
+{% endif %}
+<p>Thank you!</p>

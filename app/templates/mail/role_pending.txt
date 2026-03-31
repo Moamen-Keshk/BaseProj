@@ -1,0 +1,7 @@
+Dear {{ user.username }},
+
+You have been assigned the role of {{ role_name }} at {{ property_name }} by {{ assigned_by }}.
+
+Your account status is currently Pending. You will receive another email as soon as a superior reviews and activates your account.
+
+Thank you!
