@@ -34,12 +34,9 @@ def get_user_rank(user, property_id):
 @api.route('/users', methods=['GET', 'OPTIONS'], strict_slashes=False)
 def get_user():
     """Gets the profile of the currently logged-in user and attaches their PMS Role."""
-
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
-    # 2. ACTUAL GET REQUEST LOGIC
     try:
         user_uid = get_current_user()
 
@@ -63,7 +60,7 @@ def get_user():
                     user_data['role_name'] = 'Unassigned'
                     user_data['property_id'] = None
 
-            return make_response(jsonify({'status': 'success', 'data': user_data})), 201
+            return make_response(jsonify({'status': 'success', 'data': user_data})), 200
 
         return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized: Invalid Token'})), 401
 
@@ -79,30 +76,41 @@ def get_user():
 @api.route('/properties/<int:property_id>/staff', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_staff')
 def get_staff(property_id):
-    """Returns a list of all staff members assigned to the property."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    """Returns a list of all staff members assigned to the property with hierarchy checks."""
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
+        current_uid = get_current_user()
+        current_user = User.query.get(current_uid)
+        current_user_rank = get_user_rank(current_user, property_id)
+
         access_records = UserPropertyAccess.query.filter_by(property_id=property_id).all()
 
         staff_list = []
         for access in access_records:
             status_name = Constants.AccountStatusCoding.get(access.account_status_id, 'Unknown')
+            target_rank = Constants.RoleHierarchy.get(access.role.name, 0)
+
+            # Can manage only if current user's rank is strictly greater than the target's rank
+            can_manage = current_user_rank > target_rank
+
             staff_list.append({
                 'user_uid': access.user.uid,
                 'username': access.user.username,
                 'email': access.user.email,
+                'role_id': access.role.id,
                 'role_name': access.role.name,
                 'status_id': access.account_status_id,
-                'status_name': status_name
+                'status_name': status_name,
+                'can_manage': can_manage,
+                'is_current_user': access.user.uid == current_uid
             })
 
         return make_response(jsonify({
             'status': 'success',
             'data': staff_list
-        })), 201
+        })), 200
     except Exception as e:
         logging.exception("Error in get_staff: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch staff.'})), 500
@@ -112,7 +120,6 @@ def get_staff(property_id):
 @require_permission('manage_staff')
 def assign_staff_role(property_id):
     """Directly links an existing User to a Property with a Pending Role."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -150,7 +157,6 @@ def assign_staff_role(property_id):
         db.session.add(new_access)
         db.session.commit()
 
-        # Send Email Notification
         send_email(
             to=target_user.email,
             subject='Role Assignment Pending Approval',
@@ -169,11 +175,92 @@ def assign_staff_role(property_id):
         return make_response(jsonify({'status': 'error', 'message': 'Failed to assign staff.'})), 500
 
 
-@api.route('/properties/<int:property_id>/staff/<string:target_user_uid>/status', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@api.route('/properties/<int:property_id>/staff/<string:target_user_uid>/role', methods=['PUT', 'OPTIONS'],
+           strict_slashes=False)
+@require_permission('manage_staff')
+def update_staff_role(property_id, target_user_uid):
+    """Updates an existing staff member's role."""
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        current_uid = get_current_user()
+        current_user = User.query.get(current_uid)
+
+        target_access = UserPropertyAccess.query.filter_by(user_id=target_user_uid, property_id=property_id).first()
+        if not target_access:
+            return make_response(jsonify({'status': 'fail', 'message': 'Target user not found in this property.'})), 404
+
+        new_role_id = request.json.get('role_id')
+        new_role = Role.query.get(new_role_id)
+        if not new_role:
+            return make_response(jsonify({'status': 'fail', 'message': 'Invalid role.'})), 400
+
+        current_user_rank = get_user_rank(current_user, property_id)
+        old_role_rank = Constants.RoleHierarchy.get(target_access.role.name, 0)
+        new_role_rank = Constants.RoleHierarchy.get(new_role.name, 0)
+
+        # Ensure user is high enough to change this person
+        if current_user_rank <= old_role_rank:
+            return make_response(jsonify(
+                {'status': 'fail', 'message': 'Forbidden: You can only modify roles below your own level.'})), 403
+
+        # Ensure user isn't giving them a role equal to or higher than their own
+        if current_user_rank <= new_role_rank:
+            return make_response(jsonify(
+                {'status': 'fail', 'message': 'Forbidden: You cannot assign a role at or above your own level.'})), 403
+
+        target_access.role_id = new_role.id
+        db.session.commit()
+
+        return make_response(
+            jsonify({'status': 'success', 'message': f'Role successfully updated to {new_role.name}.'})), 200
+
+    except Exception as e:
+        logging.exception("Error in update_staff_role: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to update staff role.'})), 500
+
+
+@api.route('/properties/<int:property_id>/staff/<string:target_user_uid>', methods=['DELETE', 'OPTIONS'],
+           strict_slashes=False)
+@require_permission('manage_staff')
+def remove_staff(property_id, target_user_uid):
+    """Removes a staff member from the property entirely."""
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        current_uid = get_current_user()
+        current_user = User.query.get(current_uid)
+
+        target_access = UserPropertyAccess.query.filter_by(user_id=target_user_uid, property_id=property_id).first()
+        if not target_access:
+            return make_response(jsonify({'status': 'fail', 'message': 'Target user not found in this property.'})), 404
+
+        current_user_rank = get_user_rank(current_user, property_id)
+        target_user_rank = Constants.RoleHierarchy.get(target_access.role.name, 0)
+
+        if current_user_rank <= target_user_rank:
+            return make_response(jsonify(
+                {'status': 'fail', 'message': 'Forbidden: You can only remove users below your own level.'})), 403
+
+        db.session.delete(target_access)
+        db.session.commit()
+
+        return make_response(jsonify({'status': 'success', 'message': 'User removed from property.'})), 200
+
+    except Exception as e:
+        logging.exception("Error in remove_staff: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to remove staff.'})), 500
+
+
+@api.route('/properties/<int:property_id>/staff/<string:target_user_uid>/status', methods=['PUT', 'OPTIONS'],
+           strict_slashes=False)
 @require_permission('manage_staff')
 def update_staff_status(property_id, target_user_uid):
     """Activates, Suspends, or Cancels an existing staff account."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -205,7 +292,6 @@ def update_staff_status(property_id, target_user_uid):
         target_user = User.query.get(target_user_uid)
         target_property = Property.query.get(property_id)
 
-        # Send Status Update Email
         send_email(
             to=target_user.email,
             subject=f'Your Account Status is now: {status_name}',
@@ -217,7 +303,7 @@ def update_staff_status(property_id, target_user_uid):
         )
 
         return make_response(
-            jsonify({'status': 'success', 'message': f'Account status updated to {status_name}.'})), 201
+            jsonify({'status': 'success', 'message': f'Account status updated to {status_name}.'})), 200
 
     except Exception as e:
         logging.exception("Error in update_staff_status: %s", str(e))
@@ -232,8 +318,6 @@ def update_staff_status(property_id, target_user_uid):
 @api.route('/properties/<int:property_id>/invites', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_staff')
 def get_invites(property_id):
-    """Returns a list of all pending email invitations for the property."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -250,7 +334,7 @@ def get_invites(property_id):
                 'invite_code': invite.invite_code
             })
 
-        return make_response(jsonify({'status': 'success', 'data': invite_list})), 201
+        return make_response(jsonify({'status': 'success', 'data': invite_list})), 200
     except Exception as e:
         logging.exception("Error in get_invites: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch invites.'})), 500
@@ -259,8 +343,6 @@ def get_invites(property_id):
 @api.route('/properties/<int:property_id>/invites', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_staff')
 def create_invite(property_id):
-    """Generates an invitation code and emails it to the future staff member."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -277,7 +359,6 @@ def create_invite(property_id):
         if not role or not email:
             return make_response(jsonify({'status': 'fail', 'message': 'Email and Role are required.'})), 400
 
-        # Enforce Hierarchy
         current_user_rank = get_user_rank(current_user, property_id)
         target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
 
@@ -289,7 +370,6 @@ def create_invite(property_id):
         db.session.add(invite)
         db.session.commit()
 
-        # Send the Email
         send_email(
             to=email,
             subject=f'You have been invited to join {target_property.name}',
@@ -315,8 +395,6 @@ def create_invite(property_id):
 @api.route('/properties/<int:property_id>/invites/<int:invite_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_staff')
 def delete_invite(property_id, invite_id):
-    """Revokes a pending invitation."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -328,7 +406,6 @@ def delete_invite(property_id, invite_id):
         if not invite:
             return make_response(jsonify({'status': 'fail', 'message': 'Invite not found.'})), 404
 
-        # Verify hierarchy before allowing deletion
         current_user_rank = get_user_rank(current_user, property_id)
         target_role_rank = Constants.RoleHierarchy.get(invite.role.name, 0)
 
@@ -340,7 +417,7 @@ def delete_invite(property_id, invite_id):
         db.session.delete(invite)
         db.session.commit()
 
-        return make_response(jsonify({'status': 'success', 'message': 'Invitation successfully revoked.'})), 201
+        return make_response(jsonify({'status': 'success', 'message': 'Invitation successfully revoked.'})), 200
 
     except Exception as e:
         logging.exception("Error in delete_invite: %s", str(e))
@@ -351,15 +428,12 @@ def delete_invite(property_id, invite_id):
 @api.route('/properties/<int:property_id>/assignable-roles', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_staff')
 def get_assignable_roles(property_id):
-    """Returns roles from the database that the current user is allowed to assign."""
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
         current_uid = get_current_user()
         current_user = User.query.get(current_uid)
-
-        # Get the numeric rank of the logged-in user
         current_user_rank = get_user_rank(current_user, property_id)
 
         all_roles = Role.query.all()
@@ -367,9 +441,6 @@ def get_assignable_roles(property_id):
 
         for role in all_roles:
             target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
-
-            # Only return roles strictly below the current user's rank
-            # (Change to <= if you want them to assign equals)
             if target_role_rank < current_user_rank:
                 assignable_roles.append({
                     'id': role.id,

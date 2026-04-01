@@ -17,8 +17,8 @@ def send_email(to: str, subject: str, template: str, **kwargs: Any) -> Thread:
     app = cast(Flask, current_app._get_current_object())
 
     msg = Message(
-        subject=f"{app.config['FLASKY_MAIL_SUBJECT_PREFIX']} {subject}",
-        sender=app.config["FLASKY_MAIL_SENDER"],
+        subject=f"{app.config['MAIL_SUBJECT_PREFIX']} {subject}",
+        sender=app.config["MAIL_SENDER"],
         recipients=[to],
     )
     msg.body = render_template(f"{template}.txt", **kwargs)
