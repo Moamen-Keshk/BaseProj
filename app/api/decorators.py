@@ -1,35 +1,44 @@
 from functools import wraps
 from flask import request, jsonify, make_response
+
+# Ensure these import paths match your project structure
 from app.auth.utils import get_current_user
 from app.api.models import User, UserPropertyAccess
+from app.api.constants import Constants
 
 
 def require_permission(required_permission):
+    """
+    Ensures the user is Active and their assigned role at the target property
+    contains the specific permission required to execute the action.
+    """
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            # 1. Authenticate User
+            # 0. Instant CORS Preflight Bypass
+            if request.method == 'OPTIONS':
+                return make_response(jsonify({"status": "ok"})), 200
+
+            # 1. Authenticate User via Firebase Token
             user_uid = get_current_user()
-            if not isinstance(user_uid, str):
-                return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+            if not user_uid:
+                return make_response(
+                    jsonify({'status': 'fail', 'message': 'Unauthorized: Missing or invalid token.'})), 401
 
             user = User.query.get(user_uid)
             if not user:
-                return make_response(jsonify({'status': 'fail', 'message': 'User not found.'})), 404
+                return make_response(jsonify({'status': 'fail', 'message': 'User not found in database.'})), 404
 
             # 2. Super Admins bypass all property-level checks
             if user.is_super_admin:
                 return f(*args, **kwargs)
 
             # 3. Determine the Target Property ID
-            # Look in URL route variables first (e.g., /properties/<int:property_id>/sync)
             property_id = kwargs.get('property_id')
 
-            # Look in JSON body if not in URL
             if not property_id and request.is_json:
                 property_id = request.get_json().get('property_id')
 
-            # Look in Query Parameters (e.g., GET /bookings?property_id=1)
             if not property_id:
                 property_id = request.args.get('property_id', type=int)
 
@@ -49,7 +58,7 @@ def require_permission(required_permission):
                 return make_response(
                     jsonify({'status': 'fail', 'message': 'Forbidden: You are not assigned to this property.'})), 403
 
-            # NEW: Ensure the account has been approved/activated by a superior
+            # 5. Ensure the account has been approved/activated by a superior
             if access.account_status_id != 2:  # 2 = Active
                 status_name = Constants.AccountStatusCoding.get(access.account_status_id, "Unknown")
                 return make_response(jsonify({
@@ -57,8 +66,10 @@ def require_permission(required_permission):
                     'message': f'Forbidden: Your account is currently {status_name}.'
                 })), 403
 
-            # 5. Check if the assigned role has the specific permission
-            if required_permission not in access.role.permissions_json:
+            # 6. Check if the assigned role has the specific permission
+            # Safely handle cases where permissions_json might be None
+            user_permissions = access.role.permissions_json or []
+            if required_permission not in user_permissions:
                 return make_response(jsonify({
                     'status': 'fail',
                     'message': f'Forbidden: Action requires the [{required_permission}] permission.'
@@ -70,3 +81,49 @@ def require_permission(required_permission):
         return decorated_function
 
     return decorator
+
+
+def require_active_staff(f):
+    """
+    Allows any Active staff member belonging to the property to access the route.
+    Does not check for specific granular permissions.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 0. Instant CORS Preflight Bypass
+        if request.method == 'OPTIONS':
+            return make_response(jsonify({"status": "ok"})), 200
+
+        # 1. Authenticate User
+        current_uid = get_current_user()
+        if not current_uid:
+            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized: Missing or invalid token.'})), 401
+
+        user = User.query.get(current_uid)
+        if not user:
+            return make_response(jsonify({'status': 'fail', 'message': 'User not found in database.'})), 404
+
+        # 2. Super Admin Bypass
+        if user.is_super_admin:
+            return f(*args, **kwargs)
+
+        # 3. Extract Property ID dynamically (Mirrored from require_permission)
+        property_id = kwargs.get('property_id')
+        if not property_id and request.is_json:
+            property_id = request.get_json().get('property_id')
+        if not property_id:
+            property_id = request.args.get('property_id', type=int)
+
+        if not property_id:
+            return make_response(jsonify({'status': 'fail', 'message': 'Property ID missing in request.'})), 400
+
+        # 4. Check Access & Status
+        access = UserPropertyAccess.query.filter_by(user_id=current_uid, property_id=property_id).first()
+        if not access or access.account_status_id != 2:  # 2 = Active
+            return make_response(jsonify(
+                {'status': 'fail', 'message': 'Forbidden: You are not an active staff member at this property.'})), 403
+
+        # Success! Proceed to the route
+        return f(*args, **kwargs)
+
+    return decorated_function

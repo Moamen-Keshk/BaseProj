@@ -1,11 +1,11 @@
-from flask import request, make_response, jsonify
-from . import api
 import logging
 from types import SimpleNamespace
+from flask import request, make_response, jsonify
 
+from . import api
 from app.api.models import Season, RatePlan, RoomOnline
 from .. import db
-from app.auth.utils import get_current_user
+from app.api.decorators import require_permission
 from app.api.utils.room_online_generator import update_room_online_for_season
 from app.api.channel_manager.services.pms_sync import (
     queue_season_ari_sync,
@@ -13,14 +13,19 @@ from app.api.channel_manager.services.pms_sync import (
 )
 
 
-@api.route('/new_season', methods=['POST'])
-def new_season():
-    user = get_current_user()
-    if not isinstance(user, str):
-        return _unauthorized_response()
+@api.route('/properties/<int:property_id>/seasons', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def new_season(property_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
     try:
-        season = Season.from_json(request.json)
+        season_data = request.get_json()
+        # Enforce property_id from the secured URL
+        season_data['property_id'] = property_id
+
+        season = Season.from_json(season_data)
         db.session.add(season)
         db.session.commit()
 
@@ -29,32 +34,43 @@ def new_season():
         # New season = only queue the new range
         queue_season_ari_sync(season, 'season_created')
 
-        return _success_response('Season added successfully.', 201)
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Season added successfully.'
+        })), 201
 
     except Exception as e:
         logging.exception("Error adding season: %s", e)
-        return _error_response('Failed to add season.', 400)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to add season.'
+        })), 500
 
 
-@api.route('/update_season/<int:season_id>', methods=['PUT'])
-def update_season(season_id):
-    user = get_current_user()
-    if not isinstance(user, str):
-        return _unauthorized_response()
+@api.route('/properties/<int:property_id>/seasons/<int:season_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def update_season(property_id, season_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
     try:
         data = request.get_json()
-        season = Season.query.get(season_id)
+
+        # Secure fetch with property_id
+        season = Season.query.filter_by(id=season_id, property_id=property_id).first()
 
         if not season:
-            return _not_found_response('Season not found.')
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Season not found in this property.'
+            })), 404
 
         old_property_id = season.property_id
         old_start_date = season.start_date
         old_end_date = season.end_date
 
-        if 'property_id' in data:
-            season.property_id = data['property_id']
         if 'rate_plan_id' in data:
             season.rate_plan_id = data['rate_plan_id']
         if 'start_date' in data:
@@ -75,18 +91,26 @@ def update_season(season_id):
             reason='season_updated',
         )
 
-        return _success_response('Season updated successfully.', 201)
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Season updated successfully.'
+        })), 200
 
     except Exception as e:
         logging.exception("Error updating season: %s", e)
-        return _error_response('Failed to update season.', 500)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to update season.'
+        })), 500
 
 
-@api.route('/all_seasons/<int:property_id>', methods=['GET'])
+@api.route('/properties/<int:property_id>/seasons', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_rates')
 def all_seasons(property_id):
-    user = get_current_user()
-    if not isinstance(user, str):
-        return _unauthorized_response()
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
     try:
         seasons = Season.query.filter_by(property_id=property_id).all()
@@ -96,32 +120,34 @@ def all_seasons(property_id):
             'status': 'success',
             'data': season_list,
             'page': 0
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error retrieving seasons: %s", e)
-        return _error_response('Failed to retrieve seasons.', 500)
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to retrieve seasons.'
+        })), 500
 
 
-@api.route('/delete_season/<int:season_id>', methods=['DELETE'])
-def delete_season(season_id):
+@api.route('/properties/<int:property_id>/seasons/<int:season_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def delete_season(property_id, season_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        user = get_current_user()
-        if not isinstance(user, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
-
-        season = db.session.query(Season).filter_by(id=season_id).first()
+        # Secure fetch with property_id
+        season = db.session.query(Season).filter_by(id=season_id, property_id=property_id).first()
         if not season:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Season not found.'
+                'message': 'Season not found in this property.'
             })), 404
 
         # Store values before deletion
-        property_id = season.property_id
+        property_id_stored = season.property_id
         start_date = season.start_date
         end_date = season.end_date
 
@@ -131,7 +157,7 @@ def delete_season(season_id):
 
         # Recalculate room_online prices for affected entries
         affected_room_online = RoomOnline.query.filter(
-            RoomOnline.property_id == property_id,
+            RoomOnline.property_id == property_id_stored,
             RoomOnline.date >= start_date,
             RoomOnline.date <= end_date
         ).all()
@@ -156,7 +182,7 @@ def delete_season(season_id):
         db.session.commit()
 
         deleted_snapshot = SimpleNamespace(
-            property_id=property_id,
+            property_id=property_id_stored,
             start_date=start_date,
             end_date=end_date,
         )
@@ -166,39 +192,12 @@ def delete_season(season_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Season deleted and affected room rates reverted.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in delete_season: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to delete season. Please try again.'
         })), 500
-
-
-def _success_response(message, code=201):
-    return make_response(jsonify({
-        'status': 'success',
-        'message': message
-    })), code
-
-
-def _error_response(message, code=500):
-    return make_response(jsonify({
-        'status': 'error',
-        'message': message
-    })), code
-
-
-def _not_found_response(message):
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': message
-    })), 404
-
-
-def _unauthorized_response():
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': 'Unauthorized access.'
-    })), 401

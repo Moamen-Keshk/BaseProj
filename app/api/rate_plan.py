@@ -1,11 +1,11 @@
+import logging
+from datetime import datetime
+from types import SimpleNamespace
 from flask import request, make_response, jsonify
 from . import api
-import logging
-from types import SimpleNamespace
 from app.api.models import RatePlan, RoomOnline
 from .. import db
-from app.auth.utils import get_current_user
-from datetime import datetime
+from app.api.decorators import require_permission
 from app.api.utils.room_online_generator import generate_or_update_room_online_for_rate_plan
 from app.api.channel_manager.services.pms_sync import (
     queue_rate_plan_ari_sync,
@@ -13,57 +13,59 @@ from app.api.channel_manager.services.pms_sync import (
 )
 
 
-@api.route('/new_rate_plan', methods=['POST'])
-def new_rate_plan():
-    resp = get_current_user()
-    if isinstance(resp, str):
-        try:
-            rate_plan = RatePlan.from_json(dict(request.json))
-            db.session.add(rate_plan)
-            db.session.flush()
-            db.session.commit()
+@api.route('/properties/<int:property_id>/rate_plans', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def new_rate_plan(property_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-            generate_or_update_room_online_for_rate_plan(rate_plan)
-            queue_rate_plan_ari_sync(rate_plan, 'rate_plan_created')
-
-            responseObject = {
-                'status': 'success',
-                'message': 'Rate Plan added successfully.'
-            }
-            return make_response(jsonify(responseObject)), 201
-
-        except Exception as e:
-            logging.exception(e)
-            responseObject = {
-                'status': 'error',
-                'message': 'Some error occurred. Please try again.'
-            }
-            return make_response(jsonify(responseObject)), 401
-
-    responseObject = {
-        'status': 'expired',
-        'message': 'Session expired, log in required!'
-    }
-    return make_response(jsonify(responseObject)), 202
-
-
-@api.route('/edit_rate_plan/<int:rate_plan_id>', methods=['PUT'])
-def edit_rate_plan(rate_plan_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+        rate_data = dict(request.json)
+        # Enforce property_id from the secured URL
+        rate_data['property_id'] = property_id
 
+        rate_plan = RatePlan.from_json(rate_data)
+        db.session.add(rate_plan)
+        db.session.flush()
+        db.session.commit()
+
+        generate_or_update_room_online_for_rate_plan(rate_plan)
+        queue_rate_plan_ari_sync(rate_plan, 'rate_plan_created')
+
+        responseObject = {
+            'status': 'success',
+            'message': 'Rate Plan added successfully.'
+        }
+        return make_response(jsonify(responseObject)), 201
+
+    except Exception as e:
+        logging.exception(e)
+        db.session.rollback()
+        responseObject = {
+            'status': 'error',
+            'message': 'Some error occurred. Please try again.'
+        }
+        return make_response(jsonify(responseObject)), 500
+
+
+@api.route('/properties/<int:property_id>/rate_plans/<int:rate_plan_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def edit_rate_plan(property_id, rate_plan_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
         rate_data = request.get_json()
-        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id).first()
+
+        # Ensure the rate plan exists and belongs to this property
+        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id, property_id=property_id).first()
 
         if not rate_plan:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Rate Plan not found.'
+                'message': 'Rate Plan not found in this property.'
             })), 404
 
         old_property_id = rate_plan.property_id
@@ -103,74 +105,85 @@ def edit_rate_plan(rate_plan_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Rate Plan updated successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in edit_rate_plan: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to update rate plan. Please try again.'
         })), 500
 
 
-@api.route('/get_rate_plans/<int:property_id>/<int:category_id>')
+@api.route('/properties/<int:property_id>/categories/<int:category_id>/rate_plans', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_rates')
 def get_rate_plans(property_id, category_id):
-    resp = get_current_user()
-    if isinstance(resp, str):
-        rate_plans = RatePlan.query.filter(
-            RatePlan.property_id == property_id,
-            RatePlan.category_id == category_id
-        ).order_by(RatePlan.start_date).all()
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        data = [plan.to_json() for plan in rate_plans]
-
-        responseObject = {
-            'status': 'success',
-            'data': data,
-            'page': 0
-        }
-        return make_response(jsonify(responseObject)), 201
-
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': resp
-    })), 401
-
-
-@api.route('/all_rate_plans/<int:property_id>')
-def all_rate_plans(property_id):
-    resp = get_current_user()
-    if isinstance(resp, str):
-        rate_plans = RatePlan.query.filter(
-            RatePlan.property_id == property_id
-        ).order_by(RatePlan.start_date).all()
-
-        data = [plan.to_json() for plan in rate_plans]
-
-        responseObject = {
-            'status': 'success',
-            'data': data,
-            'page': 0
-        }
-        return make_response(jsonify(responseObject)), 201
-
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': resp
-    })), 401
-
-
-@api.route('/rate_plan/<int:rate_plan_id>', methods=['GET'])
-def get_rate_plan_by_id(rate_plan_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+        rate_plans = RatePlan.query.filter_by(
+            property_id=property_id,
+            category_id=category_id
+        ).order_by(RatePlan.start_date).all()
 
-        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id).first()
+        data = [plan.to_json() for plan in rate_plans]
+
+        responseObject = {
+            'status': 'success',
+            'data': data,
+            'page': 0
+        }
+        return make_response(jsonify(responseObject)), 200
+
+    except Exception as e:
+        logging.exception("Error in get_rate_plans: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch rate plans.'
+        })), 500
+
+
+@api.route('/properties/<int:property_id>/rate_plans', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_rates')
+def all_rate_plans(property_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        rate_plans = RatePlan.query.filter_by(
+            property_id=property_id
+        ).order_by(RatePlan.start_date).all()
+
+        data = [plan.to_json() for plan in rate_plans]
+
+        responseObject = {
+            'status': 'success',
+            'data': data,
+            'page': 0
+        }
+        return make_response(jsonify(responseObject)), 200
+
+    except Exception as e:
+        logging.exception("Error in all_rate_plans: %s", str(e))
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch rate plans.'
+        })), 500
+
+
+@api.route('/properties/<int:property_id>/rate_plans/<int:rate_plan_id>', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_rates')
+def get_rate_plan_by_id(property_id, rate_plan_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id, property_id=property_id).first()
 
         if not rate_plan:
             return make_response(jsonify({
@@ -181,7 +194,7 @@ def get_rate_plan_by_id(rate_plan_id):
         return make_response(jsonify({
             'status': 'success',
             'data': rate_plan.to_json()
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in get_rate_plan_by_id: %s", str(e))
@@ -191,21 +204,19 @@ def get_rate_plan_by_id(rate_plan_id):
         })), 500
 
 
-@api.route('/delete_rate_plan/<int:rate_plan_id>', methods=['DELETE'])
-def delete_rate_plan(rate_plan_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+@api.route('/properties/<int:property_id>/rate_plans/<int:rate_plan_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_rates')
+def delete_rate_plan(property_id, rate_plan_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id).first()
+    try:
+        rate_plan = db.session.query(RatePlan).filter_by(id=rate_plan_id, property_id=property_id).first()
         if not rate_plan:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Rate Plan not found.'
+                'message': 'Rate Plan not found in this property.'
             })), 404
 
         old_property_id = rate_plan.property_id
@@ -235,10 +246,11 @@ def delete_rate_plan(rate_plan_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Rate Plan and linked RoomOnline entries deleted successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in delete_rate_plan: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to delete rate plan. Please try again.'

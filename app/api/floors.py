@@ -1,135 +1,124 @@
+import logging
 from flask import request, make_response, jsonify
 from . import api
-import logging
 from app.api.models import Floor, Room
 from .. import db
-from app.auth.utils import get_current_user
+from app.api.decorators import require_permission, require_active_staff
 
 
-@api.route('/new-floor', methods=['POST'])
-def new_floor():
-    resp = get_current_user()
-    if isinstance(resp, str):
-        try:
-            floor = Floor.from_json(dict(request.json))
-            db.session.add(floor)
-            db.session.flush()
-            db.session.commit()
-            responseObject = {
-                'status': 'success',
-                'message': 'Floor added successfully.'
-            }
-            return make_response(jsonify(responseObject)), 201
-        except Exception as e:
-            logging.exception(e)
-            responseObject = {
-                'status': 'error',
-                'message': 'Some error occurred. Please try again.'
-            }
-            return make_response(jsonify(responseObject)), 401
-    responseObject = {
-        'status': 'expired',
-        'message': 'Session expired, log in required!'
-    }
-    return make_response(jsonify(responseObject)), 202
-
-
-@api.route('/edit_floor/<int:floor_id>', methods=['PUT'])
-def edit_floor(floor_id):
+@api.route('/properties/<int:property_id>/floors', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_property')
+def new_floor(property_id):
     try:
-        # Get the current user ID and ensure they are authorized
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+        floor_data = dict(request.json)
+        # Enforce the property ID from the secured URL
+        floor_data['property_id'] = property_id
 
-        # Fetch the booking data from the request
+        floor = Floor.from_json(floor_data)
+        db.session.add(floor)
+        db.session.flush()
+        db.session.commit()
+
+        responseObject = {
+            'status': 'success',
+            'message': 'Floor added successfully.'
+        }
+        return make_response(jsonify(responseObject)), 201
+
+    except Exception as e:
+        logging.exception(e)
+        db.session.rollback()
+        responseObject = {
+            'status': 'error',
+            'message': 'Some error occurred. Please try again.'
+        }
+        return make_response(jsonify(responseObject)), 500
+
+
+@api.route('/properties/<int:property_id>/floors/<int:floor_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_property')
+def edit_floor(property_id, floor_id):
+    try:
         floor_data = request.get_json()
 
-        # Find the booking by ID
-        floor = db.session.query(Floor).filter_by(id=floor_id).first()
+        # Find the floor by ID and ensure it belongs to this property
+        floor = db.session.query(Floor).filter_by(id=floor_id, property_id=property_id).first()
         if not floor:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Floor not found or you do not have permission to edit it.'
+                'message': 'Floor not found in this property.'
             })), 404
 
-        # Update booking fields
+        # Update floor fields
         if 'floor_number' in floor_data:
             floor.floor_number = floor_data['floor_number']
-        if 'property_id' in floor_data:
-            floor.property_id = floor_data['property_id']
+
         if 'rooms' in floor_data:
             for room_data in floor_data['rooms']:
-                # Assuming you have a Room.from_json method
-                room = db.session.query(Room).filter_by(id=room_data['id']).first()
-                if not room:
+                # Update existing room or create a new one
+                if 'id' in room_data and room_data['id']:
+                    room = db.session.query(Room).filter_by(id=room_data['id'], floor_id=floor.id).first()
+                    if room:
+                        if 'room_number' in room_data:
+                            room.room_number = room_data['room_number']
+                        if 'category_id' in room_data:
+                            room.category_id = room_data['category_id']
+                else:
                     new_room = Room.from_json(room_data)
                     floor.rooms.append(new_room)
 
-                else:# Update booking fields
-                    if 'room_number' in room_data:
-                        room.room_number = room_data['room_number']
-                    if 'category_id' in room_data:
-                        room.category_id = room_data['category_id']
-
-
-        # Additional fields can be updated here
-        # ...
-
-        # Save changes to the database
-        db.session.flush()
         db.session.commit()
 
         return make_response(jsonify({
             'status': 'success',
             'message': 'Floor updated successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in edit_floor: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to update floor. Please try again.'
         })), 500
 
 
-@api.route('/all-floors/<int:property_id>')
+@api.route('/properties/<int:property_id>/floors', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_active_staff
 def all_floors(property_id):
-    resp = get_current_user()
-    if isinstance(resp, str):
+    """Allows any active staff member to view the floors (Read-Only)"""
+    try:
         floors_list = Floor.query.filter_by(property_id=property_id).order_by(Floor.floor_number).all()
-        for x in floors_list:
-            floors_list[floors_list.index(x)] = x.to_json()
+
+        serialized_floors = [floor.to_json() for floor in floors_list]
+
         responseObject = {
             'status': 'success',
-            'data': floors_list,
+            'data': serialized_floors,
             'page': 0
         }
-        return make_response(jsonify(responseObject)), 201
-    responseObject = {
-        'status': 'fail',
-        'message': resp
-    }
-    return make_response(jsonify(responseObject)), 401
+        return make_response(jsonify(responseObject)), 200
 
-@api.route('/delete_floor/<int:floor_id>', methods=['DELETE'])
-def delete_floor(floor_id):
+    except Exception as e:
+        logging.exception(e)
+        responseObject = {
+            'status': 'error',
+            'message': 'Failed to fetch floors.'
+        }
+        return make_response(jsonify(responseObject)), 500
+
+
+@api.route('/properties/<int:property_id>/floors/<int:floor_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_property')
+def delete_floor(property_id, floor_id):
     try:
-        user = get_current_user()
-        if not isinstance(user, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+        # Enforce property check
+        floor = Floor.query.filter_by(id=floor_id, property_id=property_id).first()
 
-        floor = Floor.query.get(floor_id)
         if not floor:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Floor not found.'
+                'message': 'Floor not found in this property.'
             })), 404
 
         db.session.delete(floor)
@@ -138,10 +127,11 @@ def delete_floor(floor_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Floor deleted successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("An error occurred: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to delete floor. Please try again.'

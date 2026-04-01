@@ -1,60 +1,52 @@
+import logging
 from flask import request, make_response, jsonify
 from . import api
-import logging
 from .. import db
 from app.api.models import Category
-from app.auth.utils import get_current_user
+from app.api.decorators import require_active_staff
 
-@api.route('/new-category', methods=['POST'])
+
+@api.route('/categories', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_active_staff
 def new_category():
-    resp = get_current_user()
-    if isinstance(resp, str):
-        try:
-            category_new = Category.from_json(dict(request.json))
-            db.session.add(category_new)
-            db.session.flush()
-            db.session.commit()
-            responseObject = {
-                'status': 'success',
-                'message': 'Category added.'
-            }
-            return make_response(jsonify(responseObject)), 201
-        except Exception as e:
-            logging.exception(e)
-            responseObject = {
-                'status': 'error',
-                'message': 'Some error occurred. Please try again.'
-            }
-            return make_response(jsonify(responseObject)), 401
-    responseObject = {
-        'status': 'expired',
-        'message': 'Session expired, log in required!'
-    }
-    return make_response(jsonify(responseObject)), 202
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-@api.route('/edit_category/<int:category_id>', methods=['PUT'])
-def edit_category(category_id):
     try:
-        # Get the current user ID and ensure they are authorized
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Unauthorized access.'
-            })), 401
+        category_data = dict(request.json)
+        category_new = Category.from_json(category_data)
+        db.session.add(category_new)
+        db.session.flush()
+        db.session.commit()
 
-        # Fetch the booking data from the request
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Category added successfully.'
+        })), 201
+
+    except Exception as e:
+        logging.exception(e)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Some error occurred. Please try again.'
+        })), 500
+
+
+@api.route('/categories/<int:category_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_active_staff
+def edit_category(category_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
         category_data = request.get_json()
+        category = db.session.query(Category).filter_by(id=category_id).first()
 
-        # Find the booking by ID
-        category = db.session.query(Category).filter_by(id=category_id, creator_id=user_id).first()
         if not category:
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Category not found or you do not have permission to edit it.'
-            })), 404
+            return make_response(jsonify({'status': 'fail', 'message': 'Category not found.'})), 404
 
-        # Update booking fields
         if 'name' in category_data:
             category.name = category_data['name']
         if 'capacity' in category_data:
@@ -62,38 +54,34 @@ def edit_category(category_id):
         if 'description' in category_data:
             category.description = category_data['description']
 
-        # Additional fields can be updated here
-        # ...
-
-        # Save changes to the database
         db.session.commit()
 
-        return make_response(jsonify({
-            'status': 'success',
-            'message': 'Category updated successfully.'
-        })), 201
+        return make_response(jsonify({'status': 'success', 'message': 'Category updated.'})), 200
+
     except Exception as e:
         logging.exception("Error in edit_category: %s", str(e))
-        return make_response(jsonify({
-            'status': 'error',
-            'message': 'Failed to update category. Please try again.'
-        })), 500
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to update category.'})), 500
 
-@api.route('/all-categories')
+
+@api.route('/categories', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_active_staff
 def all_categories():
-    resp = get_current_user()
-    if isinstance(resp, str):
-        categories_list = Category.query.order_by(Category.id).all()
-        for x in categories_list:
-            categories_list[categories_list.index(x)] = x.to_json()
-        responseObject = {
+    """Allows any active staff member to view the global room categories"""
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        # Fetches ALL categories globally
+        categories_list = db.session.query(Category).order_by(Category.id).all()
+        serialized_categories = [category.to_json() for category in categories_list]
+
+        return make_response(jsonify({
             'status': 'success',
-            'data': categories_list,
+            'data': serialized_categories,
             'page': 0
-        }
-        return make_response(jsonify(responseObject)), 201
-    responseObject = {
-        'status': 'fail',
-        'message': resp
-    }
-    return make_response(jsonify(responseObject)), 401
+        })), 200
+
+    except Exception as e:
+        logging.exception("Error in all_categories: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch categories.'})), 500

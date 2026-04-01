@@ -1,11 +1,14 @@
+import logging
+from datetime import datetime, timedelta, date
+from types import SimpleNamespace
+
 from flask import request, jsonify, make_response
+
 from . import api
 from .. import db
 from app.api.models import Block, Room, RoomOnline, RatePlan, Season, Booking
 from app.api.constants import Constants
-from datetime import datetime, timedelta, date
-from types import SimpleNamespace
-import logging
+from app.api.decorators import require_permission
 from app.api.channel_manager.services.pms_sync import (
     queue_block_ari_sync,
     queue_block_transition_ari_sync,
@@ -22,10 +25,18 @@ def parse_date(value):
     return None
 
 
-@api.route('/new_block', methods=['POST'])
-def new_block():
+@api.route('/properties/<int:property_id>/blocks', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_bookings')
+def new_block(property_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
         block_data = request.get_json()
+        # Enforce property_id from the secured URL
+        block_data['property_id'] = property_id
+
         block = Block.from_json(block_data)
         db.session.add(block)
         update_room_online_for_block(block)
@@ -40,27 +51,36 @@ def new_block():
         })), 201
 
     except ValueError as ve:
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'fail',
             'message': str(ve)
         })), 400
     except Exception as e:
         logging.exception("Error in new_block: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to create block.'
         })), 500
 
 
-@api.route('/edit_block/<int:block_id>', methods=['PUT'])
-def edit_block(block_id):
+@api.route('/properties/<int:property_id>/blocks/<int:block_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_bookings')
+def edit_block(property_id, block_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
         block_data = request.get_json()
-        block = db.session.query(Block).filter_by(id=block_id).first()
+
+        # Ensure block exists and belongs to this property
+        block = db.session.query(Block).filter_by(id=block_id, property_id=property_id).first()
         if not block:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Block not found.'
+                'message': 'Block not found in this property.'
             })), 404
 
         old_property_id = block.property_id
@@ -71,7 +91,6 @@ def edit_block(block_id):
         block.note = block_data.get('note', block.note)
         block.start_date = parse_date(block_data.get('start_date', block.start_date))
         block.end_date = parse_date(block_data.get('end_date', block.end_date))
-        block.property_id = block_data.get('property_id', block.property_id)
         block.room_id = block_data.get('room_id', block.room_id)
 
         block.calculate_fields()
@@ -96,20 +115,25 @@ def edit_block(block_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Block updated successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in edit_block: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to update block.'
         })), 500
 
 
-@api.route('/all_blocks', methods=['GET'])
-def all_blocks():
+@api.route('/properties/<int:property_id>/blocks', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_bookings')
+def all_blocks(property_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        property_id = request.args.get('property_id', type=int)
         year = request.args.get('year', type=int)
         month = request.args.get('month', type=int)
 
@@ -122,7 +146,7 @@ def all_blocks():
         return make_response(jsonify({
             'status': 'success',
             'data': [block.to_json() for block in blocks]
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in all_blocks: %s", str(e))
@@ -132,14 +156,19 @@ def all_blocks():
         })), 500
 
 
-@api.route('/delete_block/<int:block_id>', methods=['DELETE'])
-def delete_block(block_id):
+@api.route('/properties/<int:property_id>/blocks/<int:block_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_bookings')
+def delete_block(property_id, block_id):
+    # 1. INSTANT CORS PREFLIGHT APPROVAL
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        block = db.session.query(Block).filter_by(id=block_id).first()
+        block = db.session.query(Block).filter_by(id=block_id, property_id=property_id).first()
         if not block:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Block not found.'
+                'message': 'Block not found in this property.'
             })), 404
 
         old_property_id = block.property_id
@@ -163,15 +192,18 @@ def delete_block(block_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Block deleted successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in delete_block: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to delete block.'
         })), 500
 
+
+# --- HELPER FUNCTIONS ---
 
 def update_room_online_for_block(block):
     current_date = block.start_date
@@ -213,8 +245,6 @@ def update_room_online_for_block(block):
             room_online.room_status_id = Constants.RoomStatusCoding['Blocked']
 
         current_date += timedelta(days=1)
-
-    db.session.commit()
 
 
 def resolve_price_for_block(room_date, rate_plans, seasons):
@@ -258,5 +288,3 @@ def remove_blocked_status_for_block(block):
                 room_online.room_status_id = Constants.RoomStatusCoding['Available']
 
         current_date += timedelta(days=1)
-
-    db.session.commit()

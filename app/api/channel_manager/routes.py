@@ -1,8 +1,7 @@
-from flask import request, make_response, jsonify
 import logging
-from app.api.decorators import require_permission
-from app.api.models import PMSPermission
+from flask import request, make_response, jsonify
 
+from app.api.decorators import require_permission
 from app import db
 from app.auth.utils import get_current_user
 from . import channel_manager
@@ -20,42 +19,34 @@ from app.api.channel_manager.models import (
 # CONNECTIONS
 # ==========================================
 
-@channel_manager.route('/connections', methods=['GET'])
-def list_channel_connections():
+@channel_manager.route('/properties/<int:property_id>/connections', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def list_channel_connections(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
-
-        property_id = request.args.get('property_id', type=int)
-
-        query = ChannelConnection.query
-        if property_id:
-            query = query.filter_by(property_id=property_id)
-
-        items = query.all()
-
+        items = ChannelConnection.query.filter_by(property_id=property_id).all()
         return make_response(jsonify({
             'status': 'success',
             'data': [item.to_json() for item in items]
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in list_channel_connections: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch channel connections.'})), 500
 
 
-@channel_manager.route('/connections', methods=['POST'])
-def create_channel_connection():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def create_channel_connection(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
+    try:
         data = request.get_json() or {}
 
         item = ChannelConnection(
-            property_id=data['property_id'],
+            property_id=property_id,  # Forced from secured URL
             channel_code=data['channel_code'],
             status=data.get('status', 'inactive'),
             credentials_json=data.get('credentials_json', {}),
@@ -71,21 +62,21 @@ def create_channel_connection():
             'message': 'Channel connection created successfully.',
             'data': item.to_json()
         })), 201
-
     except Exception as e:
         logging.exception("Error in create_channel_connection: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create channel connection.'})), 500
 
 
-@channel_manager.route('/connections/<int:connection_id>', methods=['PUT'])
-def edit_channel_connection(connection_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def edit_channel_connection(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
+    try:
         data = request.get_json() or {}
-        item = ChannelConnection.query.get(connection_id)
+        item = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
 
         if not item:
             return make_response(jsonify({'status': 'fail', 'message': 'Channel connection not found.'})), 404
@@ -105,93 +96,68 @@ def edit_channel_connection(connection_id):
             'status': 'success',
             'message': 'Channel connection updated successfully.',
             'data': item.to_json()
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in edit_channel_connection: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to update channel connection.'})), 500
 
 
-@channel_manager.route('/connections/<int:connection_id>', methods=['DELETE'])
-def delete_channel_connection(connection_id):
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def delete_channel_connection(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+        item = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
+        if not item:
+            return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
 
-        item = ChannelConnection.query.get(connection_id)
-        if item:
-            db.session.delete(item)
-            db.session.commit()
+        db.session.delete(item)
+        db.session.commit()
 
-        return make_response(jsonify({'status': 'success', 'message': 'Connection deleted.'})), 201
+        return make_response(jsonify({'status': 'success', 'message': 'Connection deleted.'})), 200
     except Exception as e:
         logging.exception("Error deleting connection: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to delete connection.'})), 500
 
 
-@channel_manager.route('/connections/<int:connection_id>/sync', methods=['POST'])
-def force_sync_connection(connection_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/sync', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def force_sync_connection(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        connection = ChannelConnection.query.get(connection_id)
+    try:
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
 
-        # Trigger an ARI push to sync rates and availability immediately
         from app.api.channel_manager.tasks.bulk_push_ari import process_bulk_ari_push
         process_bulk_ari_push.delay(connection.property_id)
 
-        return make_response(jsonify({'status': 'success', 'message': 'Sync started.'})), 201
+        return make_response(jsonify({'status': 'success', 'message': 'Sync started.'})), 200
     except Exception as e:
         logging.exception("Error forcing sync: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to sync.'})), 500
-
-
-@channel_manager.route('/connections/property/<int:property_id>', methods=['GET'])
-def get_property_connections(property_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
-
-        connections = ChannelConnection.query.filter_by(property_id=property_id).all()
-
-        data = []
-        for conn in connections:
-            data.append({
-                'id': conn.id,
-                'channel_code': conn.channel_code,
-                'status': conn.status,
-                'created_at': conn.created_at.isoformat() if conn.created_at else None
-            })
-
-        return make_response(jsonify({'status': 'success', 'data': data})), 201
-
-    except Exception as e:
-        return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
 
 # ==========================================
 # ROOM MAPS
 # ==========================================
 
-@channel_manager.route('/room_maps', methods=['GET'])
-def list_channel_room_maps():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/room_maps', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def list_channel_room_maps(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        property_id = request.args.get('property_id', type=int)
+    try:
         channel_code = request.args.get('channel_code', type=str)
 
-        query = ChannelRoomMap.query
-        if property_id:
-            query = query.filter_by(property_id=property_id)
+        query = ChannelRoomMap.query.filter_by(property_id=property_id)
         if channel_code:
             query = query.filter_by(channel_code=channel_code)
 
@@ -200,24 +166,23 @@ def list_channel_room_maps():
         return make_response(jsonify({
             'status': 'success',
             'data': [item.to_json() for item in items]
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in list_channel_room_maps: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch room maps.'})), 500
 
 
-@channel_manager.route('/room_maps', methods=['POST'])
-def create_channel_room_map():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/room_maps', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def create_channel_room_map(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
+    try:
         data = request.get_json() or {}
 
         item = ChannelRoomMap(
-            property_id=data['property_id'],
+            property_id=property_id,  # Forced from URL
             channel_code=data['channel_code'],
             internal_room_id=data['internal_room_id'],
             external_room_id=data['external_room_id'],
@@ -233,26 +198,29 @@ def create_channel_room_map():
             'message': 'Room mapping created successfully.',
             'data': item.to_json()
         })), 201
-
     except Exception as e:
         logging.exception("Error in create_channel_room_map: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create room mapping.'})), 500
 
 
-@channel_manager.route('/room_maps/<int:map_id>', methods=['DELETE'])
-def delete_room_map(map_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail'})), 401
+@channel_manager.route('/properties/<int:property_id>/room_maps/<int:map_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def delete_room_map(property_id, map_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        item = ChannelRoomMap.query.get(map_id)
-        if item:
-            db.session.delete(item)
-            db.session.commit()
-        return make_response(jsonify({'status': 'success'})), 201
+    try:
+        item = ChannelRoomMap.query.filter_by(id=map_id, property_id=property_id).first()
+        if not item:
+            return make_response(jsonify({'status': 'fail', 'message': 'Room map not found.'})), 404
+
+        db.session.delete(item)
+        db.session.commit()
+        return make_response(jsonify({'status': 'success'})), 200
     except Exception as e:
         logging.exception("Error deleting room map: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error'})), 500
 
 
@@ -260,19 +228,16 @@ def delete_room_map(map_id):
 # RATE MAPS
 # ==========================================
 
-@channel_manager.route('/rate_maps', methods=['GET'])
-def list_channel_rate_maps():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/rate_maps', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def list_channel_rate_maps(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        property_id = request.args.get('property_id', type=int)
+    try:
         channel_code = request.args.get('channel_code', type=str)
 
-        query = ChannelRatePlanMap.query
-        if property_id:
-            query = query.filter_by(property_id=property_id)
+        query = ChannelRatePlanMap.query.filter_by(property_id=property_id)
         if channel_code:
             query = query.filter_by(channel_code=channel_code)
 
@@ -281,24 +246,23 @@ def list_channel_rate_maps():
         return make_response(jsonify({
             'status': 'success',
             'data': [item.to_json() for item in items]
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in list_channel_rate_maps: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch rate maps.'})), 500
 
 
-@channel_manager.route('/rate_maps', methods=['POST'])
-def create_channel_rate_map():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/rate_maps', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def create_channel_rate_map(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
+    try:
         data = request.get_json() or {}
 
         item = ChannelRatePlanMap(
-            property_id=data['property_id'],
+            property_id=property_id,  # Forced from URL
             channel_code=data['channel_code'],
             internal_rate_plan_id=data['internal_rate_plan_id'],
             external_rate_plan_id=data['external_rate_plan_id'],
@@ -315,26 +279,29 @@ def create_channel_rate_map():
             'message': 'Rate mapping created successfully.',
             'data': item.to_json()
         })), 201
-
     except Exception as e:
         logging.exception("Error in create_channel_rate_map: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to create rate mapping.'})), 500
 
 
-@channel_manager.route('/rate_maps/<int:map_id>', methods=['DELETE'])
-def delete_rate_map(map_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail'})), 401
+@channel_manager.route('/properties/<int:property_id>/rate_maps/<int:map_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def delete_rate_map(property_id, map_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        item = ChannelRatePlanMap.query.get(map_id)
-        if item:
-            db.session.delete(item)
-            db.session.commit()
-        return make_response(jsonify({'status': 'success'})), 201
+    try:
+        item = ChannelRatePlanMap.query.filter_by(id=map_id, property_id=property_id).first()
+        if not item:
+            return make_response(jsonify({'status': 'fail', 'message': 'Rate map not found.'})), 404
+
+        db.session.delete(item)
+        db.session.commit()
+        return make_response(jsonify({'status': 'success'})), 200
     except Exception as e:
         logging.exception("Error deleting rate map: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error'})), 500
 
 
@@ -342,19 +309,16 @@ def delete_rate_map(map_id):
 # JOBS & LOGS
 # ==========================================
 
-@channel_manager.route('/jobs', methods=['GET'])
-def list_channel_jobs():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/jobs', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def list_channel_jobs(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        property_id = request.args.get('property_id', type=int)
+    try:
         channel_code = request.args.get('channel_code', type=str)
 
-        query = ChannelSyncJob.query
-        if property_id:
-            query = query.filter_by(property_id=property_id)
+        query = ChannelSyncJob.query.filter_by(property_id=property_id)
         if channel_code:
             query = query.filter_by(channel_code=channel_code)
 
@@ -363,26 +327,22 @@ def list_channel_jobs():
         return make_response(jsonify({
             'status': 'success',
             'data': [item.to_json() for item in items]
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in list_channel_jobs: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch jobs.'})), 500
 
 
-@channel_manager.route('/logs', methods=['GET'])
-def list_channel_logs():
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/logs', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def list_channel_logs(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        property_id = request.args.get('property_id', type=int)
+    try:
         channel_code = request.args.get('channel_code', type=str)
 
-        query = ChannelMessageLog.query
-        if property_id:
-            query = query.filter_by(property_id=property_id)
+        query = ChannelMessageLog.query.filter_by(property_id=property_id)
         if channel_code:
             query = query.filter_by(channel_code=channel_code)
 
@@ -391,23 +351,22 @@ def list_channel_logs():
         return make_response(jsonify({
             'status': 'success',
             'data': [item.to_json() for item in items]
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in list_channel_logs: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch logs.'})), 500
 
 
-@channel_manager.route('/jobs/<int:job_id>/run', methods=['POST'])
-def run_channel_job(job_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/jobs/<int:job_id>/run', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def run_channel_job(property_id, job_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        job = ChannelSyncJob.query.get(job_id)
+    try:
+        job = ChannelSyncJob.query.filter_by(id=job_id, property_id=property_id).first()
         if not job:
-            return make_response(jsonify({'status': 'fail', 'message': 'Job not found.'})), 404
+            return make_response(jsonify({'status': 'fail', 'message': 'Job not found in this property.'})), 404
 
         if job.job_type == 'ari_push':
             from .tasks.push_ari import process_ari_push_job
@@ -422,40 +381,44 @@ def run_channel_job(job_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Job dispatched successfully.'
-        })), 201
-
+        })), 200
     except Exception as e:
         logging.exception("Error in run_channel_job: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to dispatch job.'})), 500
 
 
-@channel_manager.route('/jobs/dispatch', methods=['POST'])
+# NOTE: These are global celery triggers, they do not belong to a specific property.
+@channel_manager.route('/jobs/dispatch', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def dispatch_channel_jobs():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
         user_id = get_current_user()
         if not isinstance(user_id, str):
             return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+
         from .tasks.dispatch_jobs import dispatch_pending_channel_jobs
         dispatch_pending_channel_jobs.delay()
-
-        return make_response(jsonify({'status': 'success', 'message': 'Pending channel jobs dispatched.'})), 201
-
+        return make_response(jsonify({'status': 'success', 'message': 'Pending channel jobs dispatched.'})), 200
     except Exception as e:
         logging.exception("Error in dispatch_channel_jobs: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to dispatch pending jobs.'})), 500
 
 
-@channel_manager.route('/jobs/schedule-pulls', methods=['POST'])
+@channel_manager.route('/jobs/schedule-pulls', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def trigger_schedule_reservation_pulls():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
         user_id = get_current_user()
         if not isinstance(user_id, str):
             return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+
         from .tasks.schedule_pulls import schedule_reservation_pull_jobs
         schedule_reservation_pull_jobs.delay()
-
-        return make_response(jsonify({'status': 'success', 'message': 'Reservation pull scheduling started.'})), 201
-
+        return make_response(jsonify({'status': 'success', 'message': 'Reservation pull scheduling started.'})), 200
     except Exception as e:
         logging.exception("Error in trigger_schedule_reservation_pulls: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to schedule reservation pulls.'})), 500
@@ -465,41 +428,43 @@ def trigger_schedule_reservation_pulls():
 # EXTERNAL DISCOVERY ENDPOINTS
 # ==========================================
 
-@channel_manager.route('/connections/<int:connection_id>/external_rooms', methods=['GET'])
-def get_external_rooms(connection_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/external_rooms', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def get_external_rooms(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        connection = ChannelConnection.query.get(connection_id)
+    try:
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
+
         from app.api.channel_manager.adapters import get_adapter
         adapter = get_adapter(connection.channel_code)
         rooms = adapter.fetch_external_rooms(connection)
 
-        return make_response(jsonify({'status': 'success', 'data': rooms})), 201
+        return make_response(jsonify({'status': 'success', 'data': rooms})), 200
     except Exception as e:
         logging.exception("Error fetching external rooms: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
 
-@channel_manager.route('/connections/<int:connection_id>/external_rate_plans', methods=['GET'])
-def get_external_rate_plans(connection_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/external_rate_plans', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def get_external_rate_plans(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        connection = ChannelConnection.query.get(connection_id)
+    try:
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
+
         from app.api.channel_manager.adapters import get_adapter
         adapter = get_adapter(connection.channel_code)
         rates = adapter.fetch_external_rate_plans(connection)
 
-        return make_response(jsonify({'status': 'success', 'data': rates})), 201
+        return make_response(jsonify({'status': 'success', 'data': rates})), 200
     except Exception as e:
         logging.exception("Error fetching external rate plans: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
@@ -509,11 +474,14 @@ def get_external_rate_plans(connection_id):
 # BULK MAPPING ACTIONS
 # ==========================================
 
-@channel_manager.route('/connections/<int:connection_id>/bulk_map_rooms', methods=['POST'])
-@require_permission(PMSPermission.MANAGE_CHANNELS)
-def bulk_map_rooms(connection_id):
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/bulk_map_rooms', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def bulk_map_rooms(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        connection = ChannelConnection.query.get(connection_id)
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
 
@@ -557,20 +525,20 @@ def bulk_map_rooms(connection_id):
         process_bulk_ari_push.delay(connection.property_id)
 
         return make_response(jsonify({'status': 'success', 'message': 'Rooms mapped successfully.'})), 201
-
     except Exception as e:
         db.session.rollback()
+        logging.exception("Error in bulk_map_rooms: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
 
-@channel_manager.route('/connections/<int:connection_id>/bulk_map_rate_plans', methods=['POST'])
-def bulk_map_rate_plans(connection_id):
-    try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/bulk_map_rate_plans', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def bulk_map_rate_plans(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
-        connection = ChannelConnection.query.get(connection_id)
+    try:
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
         if not connection:
             return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
 
@@ -614,18 +582,22 @@ def bulk_map_rate_plans(connection_id):
         process_bulk_ari_push.delay(connection.property_id)
 
         return make_response(jsonify({'status': 'success', 'message': 'Rate Plans mapped successfully.'})), 201
-
     except Exception as e:
         db.session.rollback()
+        logging.exception("Error in bulk_map_rate_plans: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
 
 # ==========================================
-# WEBHOOKS
+# WEBHOOKS (Publicly Exposed for OTAs)
 # ==========================================
 
-@channel_manager.route('/webhooks/booking_com', methods=['POST'])
+@channel_manager.route('/webhooks/booking_com', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def booking_com_webhook():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    # TODO: Implement OTA payload validation/authentication here before processing
     raw_payload = request.get_data(as_text=True)
     property_id = 1
     from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
@@ -634,8 +606,12 @@ def booking_com_webhook():
     return make_response(jsonify({"status": "acknowledged"})), 201
 
 
-@channel_manager.route('/webhooks/expedia', methods=['POST'])
+@channel_manager.route('/webhooks/expedia', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def expedia_webhook():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    # TODO: Implement OTA payload validation/authentication here before processing
     raw_payload = request.get_data(as_text=True)
     property_id = 1
     from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
@@ -644,42 +620,49 @@ def expedia_webhook():
     return make_response(jsonify({"status": "acknowledged"})), 201
 
 
-@channel_manager.route('/supported_channels', methods=['GET'])
+# ==========================================
+# SUPPORTED CHANNELS (Global Endpoints)
+# ==========================================
+
+@channel_manager.route('/supported_channels', methods=['GET', 'OPTIONS'], strict_slashes=False)
 def get_supported_channels():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        # 1. Added Authentication check
         user_id = get_current_user()
         if not isinstance(user_id, str):
             return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
 
         channels = SupportedChannel.query.filter_by(is_active=True).all()
 
-        # 2. Standardized Response Format
         return make_response(jsonify({
             'status': 'success',
             'data': [channel.to_json() for channel in channels]
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in get_supported_channels: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch channels.'})), 500
 
 
-@channel_manager.route('/supported_channels', methods=['POST'])
+@channel_manager.route('/supported_channels', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def add_supported_channel():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
     try:
-        # 1. Added Authentication check
         user_id = get_current_user()
         if not isinstance(user_id, str):
             return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized access.'})), 401
 
+        # Ideally, check if the current user is a global Super Admin here before allowing them to add channels to the PMS
+
         data = request.get_json()
 
-        # Basic validation
         if not data or not data.get('name') or not data.get('code'):
             return make_response(jsonify({'status': 'error', 'message': 'Name and code are required'})), 400
 
-        # Check if code already exists
         if SupportedChannel.query.filter_by(code=data['code']).first():
             return make_response(jsonify({'status': 'error', 'message': 'Channel with this code already exists'})), 409
 
@@ -693,7 +676,6 @@ def add_supported_channel():
         db.session.add(new_channel)
         db.session.commit()
 
-        # 2. Standardized Response Format
         return make_response(jsonify({
             'status': 'success',
             'message': 'Supported channel added successfully.',

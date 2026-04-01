@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request, make_response
 from flask_bootstrap import Bootstrap
 from flask_cors import CORS
 from flask_mail import Mail
@@ -25,7 +25,9 @@ def create_app(config_name):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     config[config_name].init_app(app)
-    CORS(app)
+
+    # 1. Standard CORS
+    CORS(app, resources={r"/*": {"origins": "*"}})
 
     bootstrap.init_app(app)
     mail.init_app(app)
@@ -42,6 +44,7 @@ def create_app(config_name):
         from flask_sslify import SSLify
         SSLify(app)
 
+    # 3. Register Blueprints
     from .auth import auth as auth_blueprint
     app.register_blueprint(auth_blueprint, url_prefix='/auth')
 
@@ -49,7 +52,6 @@ def create_app(config_name):
     app.register_blueprint(api_blueprint, url_prefix='/api/v1')
 
     from .api.channel_manager import channel_manager as channel_manager_blueprint
-    from .api.channel_manager import routes
     app.register_blueprint(channel_manager_blueprint, url_prefix='/channel_manager')
 
     return app

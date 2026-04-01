@@ -1,38 +1,55 @@
+import logging
 from flask import request, make_response, jsonify
+
 from . import api
 from .. import db
-from app.api.models import BookingRate
-from app.auth.utils import get_current_user
-import logging
+from app.api.models import BookingRate, Booking
+from app.api.decorators import require_permission
 
 
-@api.route('/booking_rates/<int:booking_id>', methods=['GET'])
-def get_booking_rates_for_booking(booking_id):
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/rates', methods=['GET'])
+@require_permission('view_bookings')
+def get_booking_rates_for_booking(property_id, booking_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return _unauthorized_response()
+        # Security check: Ensure the booking actually belongs to this property
+        booking = Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found in this property.'
+            })), 404
 
         booking_rates = BookingRate.query.filter_by(booking_id=booking_id).order_by(BookingRate.rate_date).all()
 
         return make_response(jsonify({
             'status': 'success',
             'data': [rate.to_json() for rate in booking_rates]
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in get_booking_rates_for_booking: %s", str(e))
-        return _server_error("Failed to retrieve booking rates.")
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to retrieve booking rates.'
+        })), 500
 
 
-@api.route('/new_booking_rate', methods=['POST'])
-def create_booking_rate():
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/rates', methods=['POST'])
+@require_permission('manage_bookings')
+def create_booking_rate(property_id, booking_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return _unauthorized_response()
+        # Security check: Ensure the booking actually belongs to this property
+        booking = Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found in this property.'
+            })), 404
 
         data = request.get_json()
+        # Force the booking_id to match the secured URL
+        data['booking_id'] = booking_id
+
         booking_rate = BookingRate.from_json(data)
 
         db.session.add(booking_rate)
@@ -45,19 +62,31 @@ def create_booking_rate():
 
     except Exception as e:
         logging.exception("Error in create_booking_rate: %s", str(e))
-        return _server_error("Failed to add booking rate.")
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to add booking rate.'
+        })), 500
 
 
-@api.route('/delete_booking_rate/<int:rate_id>', methods=['DELETE'])
-def delete_booking_rate(rate_id):
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/rates/<int:rate_id>', methods=['DELETE'])
+@require_permission('manage_bookings')
+def delete_booking_rate(property_id, booking_id, rate_id):
     try:
-        user_id = get_current_user()
-        if not isinstance(user_id, str):
-            return _unauthorized_response()
+        # Security check: Ensure the booking actually belongs to this property
+        booking = Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found in this property.'
+            })), 404
 
-        rate = BookingRate.query.get(rate_id)
+        rate = BookingRate.query.filter_by(id=rate_id, booking_id=booking_id).first()
         if not rate:
-            return _not_found("Booking rate not found.")
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking rate not found.'
+            })), 404
 
         db.session.delete(rate)
         db.session.commit()
@@ -65,30 +94,12 @@ def delete_booking_rate(rate_id):
         return make_response(jsonify({
             'status': 'success',
             'message': 'Booking rate deleted successfully.'
-        })), 201
+        })), 200
 
     except Exception as e:
         logging.exception("Error in delete_booking_rate: %s", str(e))
-        return _server_error("Failed to delete booking rate.")
-
-
-# 🔧 Common response helpers
-def _unauthorized_response():
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': 'Unauthorized access.'
-    })), 401
-
-
-def _not_found(msg):
-    return make_response(jsonify({
-        'status': 'fail',
-        'message': msg
-    })), 404
-
-
-def _server_error(msg):
-    return make_response(jsonify({
-        'status': 'error',
-        'message': msg
-    })), 500
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete booking rate.'
+        })), 500

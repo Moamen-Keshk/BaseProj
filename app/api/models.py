@@ -12,6 +12,7 @@ from app import db
 import random
 from app.api.constants import Constants
 import json
+import hashlib
 
 def parse_date(value):
     if isinstance(value, str):
@@ -234,6 +235,29 @@ class User(UserMixin, db.Model):
         except BadSignature:
             return None
         return User.query.get(data['id'])
+
+    def gravatar_hash(self):
+        return hashlib.md5(self.email.lower().encode('utf-8')).hexdigest()
+
+    def gravatar(self, size=100, default='identicon', rating='g'):
+        url = 'https://secure.gravatar.com/avatar'
+        hash_str = self.avatar_hash or self.gravatar_hash()
+        return f'{url}/{hash_str}?s={size}&d={default}&r={rating}'
+
+    def to_json(self):
+        return {
+            'uid': self.uid,
+            'email': self.email,
+            'username': self.username,
+            'name': self.name,
+            'location': self.location,
+            'about_me': self.about_me,
+            # Convert datetime objects to strings so they don't break JSON
+            'member_since': self.member_since.isoformat() if self.member_since else None,
+            'last_seen': self.last_seen.isoformat() if self.last_seen else None,
+            'avatar_hash': self.avatar_hash,
+            'is_super_admin': self.is_super_admin
+        }
 
     # --- Utility Methods ---
 
