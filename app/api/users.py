@@ -346,3 +346,38 @@ def delete_invite(property_id, invite_id):
         logging.exception("Error in delete_invite: %s", str(e))
         db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to revoke invite.'})), 500
+
+
+@api.route('/properties/<int:property_id>/assignable-roles', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_staff')
+def get_assignable_roles(property_id):
+    """Returns roles from the database that the current user is allowed to assign."""
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        current_uid = get_current_user()
+        current_user = User.query.get(current_uid)
+
+        # Get the numeric rank of the logged-in user
+        current_user_rank = get_user_rank(current_user, property_id)
+
+        all_roles = Role.query.all()
+        assignable_roles = []
+
+        for role in all_roles:
+            target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
+
+            # Only return roles strictly below the current user's rank
+            # (Change to <= if you want them to assign equals)
+            if target_role_rank < current_user_rank:
+                assignable_roles.append({
+                    'id': role.id,
+                    'name': role.name,
+                    'description': role.description
+                })
+
+        return make_response(jsonify({'status': 'success', 'data': assignable_roles})), 200
+    except Exception as e:
+        logging.exception("Error in get_assignable_roles: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch roles.'})), 500
