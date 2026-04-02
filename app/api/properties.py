@@ -17,6 +17,7 @@ def new_property():
     user_uid = get_current_user()
     if user_uid:
         try:
+            # Phone and email are handled automatically here by Property.from_json()
             property_new = Property.from_json(dict(request.json))
             # Optional: If your Property model has a creator_id, you can set it here
             # property_new.creator_id = user_uid
@@ -84,6 +85,10 @@ def edit_property(property_id):
             property_to_edit.name = property_data['name']
         if 'address' in property_data:
             property_to_edit.address = property_data['address']
+        if 'phone_number' in property_data: # <--- Added phone_number update logic
+            property_to_edit.phone_number = property_data['phone_number']
+        if 'email' in property_data:        # <--- Added email update logic
+            property_to_edit.email = property_data['email']
         if 'status_id' in property_data:
             property_to_edit.status_id = property_data['status_id']
 
@@ -138,6 +143,7 @@ def all_properties():
                 ).order_by(Property.published_date).all()
 
         # Serialize list
+        # Phone and email are handled automatically here by prop.to_json()
         serialized_properties = [prop.to_json() for prop in properties_list]
 
         responseObject = {

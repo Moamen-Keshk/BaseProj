@@ -1,6 +1,14 @@
-Dear {{ booking.first_name }} {{ booking.last_name }},
+Dear {{ first_name }} {{ last_name }},
 
 {{ message_body }}
 
-Thank you,
-Management
+Property Details:
+Property: {{ property.name }}
+Address: {{ property.address }}
+Phone: {{ property.phone_number }}
+Email: {{ property.email }}
+
+We look forward to hosting you!
+
+Best regards,
+{{ property.name }} Management

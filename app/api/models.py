@@ -397,6 +397,8 @@ class Property(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(32))
     address = db.Column(db.String(64))
+    phone_number = db.Column(db.String(20))
+    email = db.Column(db.String(120))  # <-- Added email column
     status_id = db.Column(db.Integer, db.ForeignKey('property_status.id'), default=1)
     published_date = db.Column(db.Date(), default=datetime.today().date())
 
@@ -408,6 +410,8 @@ class Property(db.Model):
             'id': self.id,
             'name': self.name,
             'address': self.address,
+            'phone_number': self.phone_number,
+            'email': self.email,  # <-- Included in JSON output
             'status': Constants.PropertyStatusCoding[self.status_id],
             'published_date': self.published_date.strftime("%d-%m-%y"),
         }
@@ -417,7 +421,15 @@ class Property(db.Model):
     def from_json(json_property):
         name = json_property.get('name')
         address = json_property.get('address')
-        return Property(name=name, address=address)
+        phone_number = json_property.get('phone_number')
+        email = json_property.get('email')  # <-- Extracted from incoming JSON
+
+        return Property(
+            name=name,
+            address=address,
+            phone_number=phone_number,
+            email=email  # <-- Passed into the Property constructor
+        )
 
 class PropertyStatus(db.Model):
     __tablename__ = 'property_status'

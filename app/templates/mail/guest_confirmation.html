@@ -4,7 +4,8 @@
 
   <p>Thank you for choosing our property! Your booking is officially confirmed.</p>
 
-  <table style="width: 100%; max-width: 400px; border-collapse: collapse; margin-top: 15px;">
+  <h3 style="margin-bottom: 5px;">Booking Details</h3>
+  <table style="width: 100%; max-width: 400px; border-collapse: collapse; margin-top: 5px;">
     <tr>
       <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Confirmation #:</strong></td>
       <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ booking.confirmation_number }}</td>
@@ -23,6 +24,28 @@
     </tr>
   </table>
 
+  <h3 style="margin-top: 20px; margin-bottom: 5px;">Property Details</h3>
+  <table style="width: 100%; max-width: 400px; border-collapse: collapse; margin-top: 5px;">
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Property:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.name }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Address:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.address }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Phone:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.phone_number }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Email:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">
+        <a href="mailto:{{ property.email }}" style="color: #0056b3; text-decoration: none;">{{ property.email }}</a>
+      </td>
+    </tr>
+  </table>
+
   {% if booking.special_request %}
   <p style="margin-top: 20px;">
     <strong>Your Special Request:</strong><br>
@@ -30,6 +53,6 @@
   </p>
   {% endif %}
 
-  <p>We look forward to hosting you!</p>
-  <p>Best regards,<br>Management</p>
+  <p style="margin-top: 25px;">We look forward to hosting you!</p>
+  <p>Best regards,<br><strong>{{ property.name }} Management</strong></p>
 </div>

@@ -44,12 +44,8 @@ def new_booking(property_id):
         db.session.commit()
 
         if booking.email:
-            send_email(
-                to=booking.email,
-                subject=f"Booking Confirmation - #{booking.confirmation_number}",
-                template="mail/guest_confirmation",  # We will create this template
-                booking=booking
-            )
+            from app.api.utils.guest_communication import send_booking_email_task
+            send_booking_email_task.delay(booking_id=booking.id, property_id=property_id)
 
         queue_booking_ari_sync(booking, 'booking_created')
 
@@ -90,12 +86,14 @@ def send_guest_message(property_id, booking_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Booking or guest email not found.'})), 404
 
         # Send the custom email
-        send_email(
-            to=booking.email,
-            subject=subject,
-            template="mail/guest_custom_message",
-            booking=booking,
-            message_body=message_body
+        from app.api.utils.guest_communication import send_guest_message
+        send_guest_message.delay(
+            email=booking.email,
+            subject=f"{subject} DO NOT REPLY",
+            message_body=message_body,
+            property_id=property_id,
+            first_name=booking.first_name,
+            last_name=booking.last_name
         )
 
         return make_response(jsonify({'status': 'success', 'message': 'Message sent to guest.'})), 200
