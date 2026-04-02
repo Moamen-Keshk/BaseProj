@@ -10,6 +10,8 @@ from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus
 from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
+# --- ADDED IMPORT ---
+from app.api.channel_manager.models import ChannelReservationLink
 from app.api.channel_manager.services.pms_sync import (
     queue_booking_ari_sync,
     queue_booking_transition_ari_sync,
@@ -182,6 +184,9 @@ def delete_booking(property_id, booking_id):
         old_room_id = booking.room_id
         old_check_in = booking.check_in
         old_check_out = booking.check_out
+
+        # --- ADDED THIS LINE TO PREVENT FOREIGN KEY ERROR ---
+        ChannelReservationLink.query.filter_by(internal_booking_id=booking_id).delete(synchronize_session=False)
 
         db.session.delete(booking)
         db.session.commit()
