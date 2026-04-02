@@ -1,7 +1,7 @@
 import logging
 from datetime import timedelta, datetime
 from types import SimpleNamespace
-
+from app.api.email import send_email
 from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
 
@@ -43,6 +43,14 @@ def new_booking(property_id):
         db.session.add(booking)
         db.session.commit()
 
+        if booking.email:
+            send_email(
+                to=booking.email,
+                subject=f"Booking Confirmation - #{booking.confirmation_number}",
+                template="mail/guest_confirmation",  # We will create this template
+                booking=booking
+            )
+
         queue_booking_ari_sync(booking, 'booking_created')
 
         return make_response(jsonify({
@@ -57,6 +65,44 @@ def new_booking(property_id):
             'status': 'error',
             'message': 'Failed to submit booking. Please try again.'
         })), 500
+
+
+# Add to app/api/bookings.py
+
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/send_message', methods=['POST', 'OPTIONS'],
+           strict_slashes=False)
+@require_permission('manage_bookings')
+def send_guest_message(property_id, booking_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        data = request.get_json()
+        subject = data.get('subject')
+        message_body = data.get('message')
+
+        if not subject or not message_body:
+            return make_response(jsonify({'status': 'fail', 'message': 'Subject and message are required.'})), 400
+
+        booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
+
+        if not booking or not booking.email:
+            return make_response(jsonify({'status': 'fail', 'message': 'Booking or guest email not found.'})), 404
+
+        # Send the custom email
+        send_email(
+            to=booking.email,
+            subject=subject,
+            template="mail/guest_custom_message",
+            booking=booking,
+            message_body=message_body
+        )
+
+        return make_response(jsonify({'status': 'success', 'message': 'Message sent to guest.'})), 200
+
+    except Exception as e:
+        logging.exception("Error in send_guest_message: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to send message.'})), 500
 
 
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)

@@ -1,0 +1,6 @@
+Dear {{ booking.first_name }} {{ booking.last_name }},
+
+{{ message_body }}
+
+Thank you,
+Management

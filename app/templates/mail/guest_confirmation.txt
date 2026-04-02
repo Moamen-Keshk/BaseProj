@@ -1,0 +1,19 @@
+Dear {{ booking.first_name }} {{ booking.last_name }},
+
+Thank you for choosing our property! Your booking is confirmed.
+
+Here are your reservation details:
+Confirmation Number: #{{ booking.confirmation_number }}
+Check-in Date: {{ booking.check_in }}
+Check-out Date: {{ booking.check_out }}
+Guests: {{ booking.number_of_adults }} Adults, {{ booking.number_of_children }} Children
+Total Rate: ${{ booking.rate }}
+
+{% if booking.special_request %}
+We have also noted your special request: "{{ booking.special_request }}"
+{% endif %}
+
+We look forward to hosting you!
+
+Best regards,
+Management

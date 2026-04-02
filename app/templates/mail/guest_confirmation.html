@@ -1,0 +1,35 @@
+<div style="font-family: Arial, sans-serif; color: #333;">
+  <h2>Booking Confirmation</h2>
+  <p>Dear <strong>{{ booking.first_name }} {{ booking.last_name }}</strong>,</p>
+
+  <p>Thank you for choosing our property! Your booking is officially confirmed.</p>
+
+  <table style="width: 100%; max-width: 400px; border-collapse: collapse; margin-top: 15px;">
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Confirmation #:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ booking.confirmation_number }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Check-in:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ booking.check_in }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Check-out:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ booking.check_out }}</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Total Rate:</strong></td>
+      <td style="padding: 8px; border-bottom: 1px solid #ddd;">${{ booking.rate }}</td>
+    </tr>
+  </table>
+
+  {% if booking.special_request %}
+  <p style="margin-top: 20px;">
+    <strong>Your Special Request:</strong><br>
+    <em>{{ booking.special_request }}</em>
+  </p>
+  {% endif %}
+
+  <p>We look forward to hosting you!</p>
+  <p>Best regards,<br>Management</p>
+</div>
