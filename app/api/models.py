@@ -1041,3 +1041,37 @@ class PropertyInvite(db.Model):
 
     property = db.relationship('Property')
     role = db.relationship('Role')
+
+
+class GuestMessage(db.Model):
+    __tablename__ = 'guest_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
+
+    # 'outbound' (Hotel -> Guest) or 'inbound' (Guest -> Hotel)
+    direction = db.Column(db.String(16), nullable=False)
+
+    # 'WhatsApp' or 'sms'
+    channel = db.Column(db.String(16), nullable=False, default='whatsapp')
+
+    message_body = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.DateTime, index=True, default=datetime.now(timezone.utc))
+    is_read = db.Column(db.Boolean, default=False)  # To show unread badges to staff
+
+    # Establish relationship to Booking
+    booking = db.relationship('Booking',
+                              backref=db.backref('chat_history', lazy='dynamic', cascade='all, delete-orphan'))
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'booking_id': self.booking_id,
+            'property_id': self.property_id,
+            'direction': self.direction,
+            'channel': self.channel,
+            'message_body': self.message_body,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'is_read': self.is_read
+        }

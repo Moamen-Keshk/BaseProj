@@ -32,6 +32,11 @@ class Config:
     CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
     CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
+    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+    TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+    TWILIO_SMS_NUMBER = os.environ.get('TWILIO_SMS_NUMBER')
+    TWILIO_WHATSAPP_NUMBER = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+
     @staticmethod
     def init_app(app):
         os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)

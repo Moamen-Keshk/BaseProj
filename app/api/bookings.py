@@ -1,9 +1,9 @@
 import logging
 from datetime import timedelta, datetime
 from types import SimpleNamespace
-from app.api.email import send_email
 from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
+from app.api.models import GuestMessage
 
 from . import api
 from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus
@@ -424,3 +424,82 @@ def assign_nightly_rates(booking):
         current_date += timedelta(days=1)
 
     booking.rate = total
+
+    # 1. Fetch Chat History
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/chat', methods=['GET', 'OPTIONS'])
+@require_permission('view_bookings')
+def get_chat_history(property_id, booking_id):
+    if request.method == 'OPTIONS': return make_response(jsonify({"status": "ok"})), 200
+
+    messages = GuestMessage.query.filter_by(booking_id=booking_id, property_id=property_id).order_by(
+        GuestMessage.timestamp.asc()).all()
+
+    # Mark inbound messages as read since the staff is opening the chat
+    unread_messages = [m for m in messages if m.direction == 'inbound' and not m.is_read]
+    for msg in unread_messages:
+        msg.is_read = True
+    if unread_messages:
+        db.session.commit()
+
+    return jsonify({'status': 'success', 'data': [m.to_json() for m in messages]}), 200
+
+# 2. Send Message from Hotel
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/chat', methods=['POST', 'OPTIONS'])
+@require_permission('manage_bookings')
+def send_chat_message(property_id, booking_id):
+    if request.method == 'OPTIONS': return make_response(jsonify({"status": "ok"})), 200
+
+    data = request.get_json()
+    message_body = data.get('message')
+    channel = data.get('channel', 'whatsapp')
+
+    # 1. Save to database INSTANTLY
+    chat_log = GuestMessage(
+        booking_id=booking_id,
+        property_id=property_id,
+        direction='outbound',
+        channel=channel,
+        message_body=message_body,
+        is_read=True
+    )
+    db.session.add(chat_log)
+    db.session.commit()
+
+    # 2. Queue Twilio delivery in the background
+    from app.api.utils.guest_communication import send_sms_whatsapp_task
+    send_sms_whatsapp_task.delay(booking_id, property_id, message_body, channel)
+
+    return jsonify({'status': 'success', 'message': 'Message queued.'}), 200
+
+# 3. Webhook to RECEIVE replies from Guests (Twilio calls this)
+@api.route('/webhooks/twilio/receive', methods=['POST'])
+def twilio_webhook():
+    # Twilio sends data as form-urlencoded
+    from_number = request.form.get('From', '')
+    body = request.form.get('Body', '')
+
+    # Clean 'WhatsApp:' prefix if present
+    clean_number = from_number.replace('whatsapp:', '')
+    channel = 'whatsapp' if 'whatsapp:' in from_number else 'sms'
+
+    # Find the most recent active booking for this phone number
+    booking = Booking.query.filter(Booking.phone.like(f"%{clean_number}%")).order_by(Booking.id.desc()).first()
+
+    if booking:
+        # Log the inbound message
+        inbound_msg = GuestMessage(
+            booking_id=booking.id,
+            property_id=booking.property_id,
+            direction='inbound',
+            channel=channel,
+            message_body=body,
+            is_read=False
+        )
+        db.session.add(inbound_msg)
+        db.session.commit()
+
+        # Optional: Trigger a WebSocket/Pusher event here to notify the Flutter app instantly
+
+    # Twilio requires an empty TwiML response to acknowledge receipt
+    from twilio.twiml.messaging_response import MessagingResponse
+    return str(MessagingResponse()), 200, {'Content-Type': 'application/xml'}
