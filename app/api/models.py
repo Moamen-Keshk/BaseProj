@@ -391,6 +391,11 @@ class OrderStatus(db.Model):
             db.session.add(stat)
         db.session.commit()
 
+# Association table for the many-to-many relationship
+property_amenities = db.Table('property_amenities',
+    db.Column('property_id', db.Integer, db.ForeignKey('properties.id'), primary_key=True),
+    db.Column('amenity_id', db.Integer, db.ForeignKey('amenities.id'), primary_key=True)
+)
 
 class Property(db.Model):
     __tablename__ = 'properties'
@@ -398,9 +403,24 @@ class Property(db.Model):
     name = db.Column(db.String(32))
     address = db.Column(db.String(64))
     phone_number = db.Column(db.String(20))
-    email = db.Column(db.String(120))  # <-- Added email column
+    email = db.Column(db.String(120))
     status_id = db.Column(db.Integer, db.ForeignKey('property_status.id'), default=1)
     published_date = db.Column(db.Date(), default=datetime.today().date())
+
+    # 👉 1. Many-to-Many: Safe to leave as is. SQLAlchemy automatically cleans up the association table.
+    amenities = db.relationship('Amenity', secondary=property_amenities, lazy='subquery',
+                                backref=db.backref('properties', lazy=True))
+
+    # 👉 2. ONE-TO-MANY CASCADES: Add these to force deletion of child rows when Property is deleted.
+    # Note: If you already have `backref='property'` defined inside the Floor/Room models,
+    # you can use `overlaps="property"` to prevent SQLAlchemy warnings.
+    floors = db.relationship('Floor', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    rooms = db.relationship('Room', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    bookings = db.relationship('Booking', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    rate_plans = db.relationship('RatePlan', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    seasons = db.relationship('Season', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    access_roles = db.relationship('UserPropertyAccess', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+
 
     def __init__(self, **kwargs):
         super(Property, self).__init__(**kwargs)
@@ -411,9 +431,10 @@ class Property(db.Model):
             'name': self.name,
             'address': self.address,
             'phone_number': self.phone_number,
-            'email': self.email,  # <-- Included in JSON output
+            'email': self.email,
             'status': Constants.PropertyStatusCoding[self.status_id],
             'published_date': self.published_date.strftime("%d-%m-%y"),
+            'amenities': [a.to_json() for a in self.amenities]
         }
         return json_property
 
@@ -422,13 +443,13 @@ class Property(db.Model):
         name = json_property.get('name')
         address = json_property.get('address')
         phone_number = json_property.get('phone_number')
-        email = json_property.get('email')  # <-- Extracted from incoming JSON
+        email = json_property.get('email')
 
         return Property(
             name=name,
             address=address,
             phone_number=phone_number,
-            email=email  # <-- Passed into the Property constructor
+            email=email
         )
 
 class PropertyStatus(db.Model):
@@ -1075,3 +1096,24 @@ class GuestMessage(db.Model):
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'is_read': self.is_read
         }
+
+class Amenity(db.Model):
+    __tablename__ = 'amenities'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(64), unique=True)
+    icon = db.Column(db.String(64), nullable=True) # Useful for Flutter frontend icons
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'icon': self.icon
+        }
+
+    @staticmethod
+    def insert_default_amenities():
+        defaults = ['Free WiFi', 'Swimming Pool', 'Gym', 'Parking', 'Room Service', 'Spa']
+        for name in defaults:
+            if not Amenity.query.filter_by(name=name).first():
+                db.session.add(Amenity(name=name))
+        db.session.commit()

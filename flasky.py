@@ -22,15 +22,15 @@ migrate = Migrate(app, db)
 from app.api.models import (
     User,
     Role,
-    PMSPermission,         # <-- Replaced Permission
-    UserPropertyAccess,    # <-- Added new mapping table
+    PMSPermission,  # <-- Replaced Permission
+    UserPropertyAccess,  # <-- Added new mapping table
     Notification,
     OrderStatus,
     PropertyStatus,
     RoomStatus,
     PaymentStatus,
     Category,
-    BookingStatus,
+    BookingStatus, Amenity,
 )
 
 from app.api.channel_manager.models import SupportedChannel
@@ -118,5 +118,6 @@ def deploy():
     BookingStatus.insert_status()
     Category.insert_categories()
     SupportedChannel.insert_channels()
+    Amenity.insert_default_amenities()
 
     print('Deployment tasks completed successfully.')

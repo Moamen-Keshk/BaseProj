@@ -1,64 +1,58 @@
 import logging
 from flask import request, make_response, jsonify
 from . import api
-from app.api.models import Property, UserPropertyAccess, Role, User
 from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
+from app.api.models import Property, UserPropertyAccess, Role, User, Floor, Amenity
 
 
 @api.route('/new_property', methods=['POST', 'OPTIONS'], strict_slashes=False)
 def new_property():
-    """Creates a new property and automatically makes the creator a Property Admin."""
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
     user_uid = get_current_user()
     if user_uid:
         try:
-            # Phone and email are handled automatically here by Property.from_json()
-            property_new = Property.from_json(dict(request.json))
-            # Optional: If your Property model has a creator_id, you can set it here
-            # property_new.creator_id = user_uid
+            data = request.get_json()
 
+            # 1. Create Basic Property
+            property_new = Property.from_json(data)
             db.session.add(property_new)
-            db.session.flush()  # Flush to generate the property_new.id before committing
+            db.session.flush()  # Generates property_new.id
 
-            # ---> NEW: AUTOMATICALLY ASSIGN CREATOR AS PROPERTY ADMIN <---
+            # 2. Assign Amenities (Wizard Step)
+            amenity_ids = data.get('amenity_ids', [])
+            if amenity_ids:
+                amenities = Amenity.query.filter(Amenity.id.in_(amenity_ids)).all()
+                property_new.amenities.extend(amenities)
+
+            # 3. Create Floors (Wizard Step)
+            floor_numbers = data.get('floors', [])
+            for f_num in floor_numbers:
+                new_floor = Floor(floor_number=f_num, property_id=property_new.id)
+                db.session.add(new_floor)
+
+            # 4. Assign Admin Access
             admin_role = Role.query.filter_by(name='Property Admin').first()
             if admin_role:
                 new_access = UserPropertyAccess(
                     user_id=user_uid,
                     property_id=property_new.id,
                     role_id=admin_role.id,
-                    account_status_id=2  # Active
+                    account_status_id=2
                 )
                 db.session.add(new_access)
 
             db.session.commit()
-
-            responseObject = {
-                'status': 'success',
-                'message': 'Property created successfully.',
-                'property_id': property_new.id
-            }
-            return make_response(jsonify(responseObject)), 201
+            return make_response(jsonify({'status': 'success', 'property_id': property_new.id})), 201
 
         except Exception as e:
-            logging.exception(e)
             db.session.rollback()
-            responseObject = {
-                'status': 'error',
-                'message': 'Some error occurred. Please try again.'
-            }
-            return make_response(jsonify(responseObject)), 500
+            return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
-    responseObject = {
-        'status': 'fail',
-        'message': 'Session expired or invalid token, log in required!'
-    }
-    return make_response(jsonify(responseObject)), 401
+    return make_response(jsonify({'status': 'fail'})), 401
 
 
 @api.route('/edit_property/<int:property_id>', methods=['PUT', 'OPTIONS'], strict_slashes=False)
@@ -85,12 +79,17 @@ def edit_property(property_id):
             property_to_edit.name = property_data['name']
         if 'address' in property_data:
             property_to_edit.address = property_data['address']
-        if 'phone_number' in property_data: # <--- Added phone_number update logic
+        if 'phone_number' in property_data:  # <--- Added phone_number update logic
             property_to_edit.phone_number = property_data['phone_number']
-        if 'email' in property_data:        # <--- Added email update logic
+        if 'email' in property_data:  # <--- Added email update logic
             property_to_edit.email = property_data['email']
         if 'status_id' in property_data:
             property_to_edit.status_id = property_data['status_id']
+
+        # Update amenities relationship
+        if 'amenity_ids' in property_data:
+            amenities = Amenity.query.filter(Amenity.id.in_(property_data['amenity_ids'])).all()
+            property_to_edit.amenities = amenities  # Completely replaces the old list
 
         # Save changes to the database
         db.session.commit()
@@ -158,3 +157,36 @@ def all_properties():
         'message': 'Session expired or invalid token, log in required!'
     }
     return make_response(jsonify(responseObject)), 401
+
+
+# Add this to app/api/properties.py
+
+@api.route('/properties/<int:property_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_property')  # Ensure only Admins can do this
+def delete_property(property_id):
+    try:
+        property_to_delete = Property.query.get(property_id)
+
+        if not property_to_delete:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Property not found.'
+            })), 404
+
+        # Because of the cascade="all, delete-orphan" in models.py,
+        # deleting the property will automatically delete floors, rooms, bookings, etc.
+        db.session.delete(property_to_delete)
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Property and all associated data deleted successfully.'
+        })), 200
+
+    except Exception as e:
+        logging.exception("Error deleting property: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to delete property. Please try again.'
+        })), 500

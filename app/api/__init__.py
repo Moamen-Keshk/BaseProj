@@ -18,7 +18,8 @@ from . import (
     season,
     room_online,
     blocks,
-    users
+    users,
+    amenities
 )
 
 # 3. Inject the new PMSPermission into your templates
