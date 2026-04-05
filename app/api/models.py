@@ -419,8 +419,14 @@ class Property(db.Model):
     bookings = db.relationship('Booking', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     rate_plans = db.relationship('RatePlan', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     seasons = db.relationship('Season', backref='property_ref', lazy=True, cascade="all, delete-orphan")
-    access_roles = db.relationship('UserPropertyAccess', backref='property_ref', lazy=True, cascade="all, delete-orphan")
-
+    access_roles = db.relationship(
+        'UserPropertyAccess',
+        # 👉 CHANGED: Use db.backref() to pass overlaps to the child model
+        backref=db.backref('property_ref', overlaps="property,staff_access"),
+        lazy=True,
+        cascade="all, delete-orphan",
+        overlaps="property,staff_access"
+    )
 
     def __init__(self, **kwargs):
         super(Property, self).__init__(**kwargs)
@@ -475,6 +481,7 @@ class PropertyStatus(db.Model):
             db.session.add(stat)
         db.session.commit()
 
+
 class Category(db.Model):
     __tablename__ = 'categories'
     id = db.Column(db.Integer, primary_key=True)
@@ -503,12 +510,28 @@ class Category(db.Model):
 
     @staticmethod
     def insert_categories():
+        # Dictionary format: 'Category Name': [Capacity, 'Short Description (Max 64 chars)']
         cat = {
-            'Single': [1, ''],
-            'Double': [2, ''],
-            'Twin': [2, ''],
-            'Triple': [3, '']
+            'Single': [1, 'A room assigned to one person.'],
+            'Double': [2, 'A room for two people with one double bed.'],
+            'Twin': [2, 'A room with two single beds for two people.'],
+            'Triple': [3, 'A room that can accommodate three persons.'],
+            'Quad': [4, 'A room assigned to four people with multiple beds.'],
+            'Queen': [2, 'A room with a queen-sized bed.'],
+            'King': [2, 'A room with a king-sized bed.'],
+            'Twin Double': [4, 'A room with two double or queen beds for up to four people.'],
+            'Studio': [2, 'A room with a studio bed or convertible couch.'],
+            'Junior Suite': [3, 'A large room with a bed and a designated sitting area.'],
+            'Suite': [4, 'A living room connected to one or more bedrooms.'],
+            'Presidential Suite': [4, 'The most luxurious and expensive suite in the hotel.'],
+            'Family Room': [5, 'A larger room tailored for families with multiple beds.'],
+            'Accessible Room': [2, 'A room designed for guests with mobility disabilities.'],
+            'Connecting Rooms': [4, 'Two adjacent rooms with a connecting inner door.'],
+            'Penthouse': [4, 'Luxury suite located on the top floor of the hotel.'],
+            'Villa': [6, 'A standalone or semi-detached luxury property.'],
+            'Cabana': [2, 'A room adjacent to the pool or beach area.']
         }
+
         for c in cat:
             categ = Category.query.filter_by(name=c).first()
             if categ is None:
