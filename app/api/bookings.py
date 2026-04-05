@@ -3,14 +3,14 @@ from datetime import timedelta, datetime
 from types import SimpleNamespace
 from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
-from app.api.models import GuestMessage
 
 from . import api
-from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus
+from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage
 from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
-# --- ADDED IMPORT ---
+
+# --- CHANNEL MANAGER IMPORTS ---
 from app.api.channel_manager.models import ChannelReservationLink
 from app.api.channel_manager.services.pms_sync import (
     queue_booking_ari_sync,
@@ -62,8 +62,6 @@ def new_booking(property_id):
             'message': 'Failed to submit booking. Please try again.'
         })), 500
 
-
-# Add to app/api/bookings.py
 
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>/send_message', methods=['POST', 'OPTIONS'],
            strict_slashes=False)
@@ -126,13 +124,13 @@ def edit_booking(property_id, booking_id):
         old_check_in = booking.check_in
         old_check_out = booking.check_out
 
-        # Update fields dynamically
+        # Update fields dynamically (Added 'amount_paid')
         updateable_fields = [
             'first_name', 'last_name', 'email', 'phone', 'number_of_adults',
             'number_of_children', 'payment_status_id', 'status_id', 'note',
             'special_request', 'check_in', 'check_out', 'check_in_day',
             'check_in_month', 'check_in_year', 'check_out_day', 'check_out_month',
-            'check_out_year', 'number_of_days', 'rate', 'room_id'
+            'check_out_year', 'number_of_days', 'rate', 'room_id', 'amount_paid'
         ]
 
         for field in updateable_fields:
@@ -141,6 +139,9 @@ def edit_booking(property_id, booking_id):
 
         BookingRate.query.filter_by(booking_id=booking.id).delete()
         assign_nightly_rates(booking)
+
+        # 👉 Automatically resolve the payment status after any rate or payment changes
+        booking.update_payment_status()
 
         db.session.commit()
 
@@ -208,7 +209,8 @@ def all_bookings(property_id):
         })), 500
 
 
-@api.route('/properties/<int:property_id>/bookings/<int:booking_id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>', methods=['DELETE', 'OPTIONS'],
+           strict_slashes=False)
 @require_permission('manage_bookings')
 def delete_booking(property_id, booking_id):
     # 1. INSTANT CORS PREFLIGHT APPROVAL
@@ -258,10 +260,10 @@ def delete_booking(property_id, booking_id):
         })), 500
 
 
-@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/check_in', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/check_in', methods=['POST', 'OPTIONS'],
+           strict_slashes=False)
 @require_permission('manage_bookings')
 def check_in_booking(property_id, booking_id):
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -298,10 +300,198 @@ def check_in_booking(property_id, booking_id):
         })), 500
 
 
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/check_out', methods=['POST', 'OPTIONS'],
+           strict_slashes=False)
+@require_permission('manage_bookings')
+def check_out_booking(property_id, booking_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
+
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        checked_out_status = db.session.query(BookingStatus).filter_by(code='CHECKED OUT').first()
+        if not checked_out_status:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Checked Out status not configured in the system.'
+            })), 500
+
+        booking.change_status(checked_out_status.id)
+        db.session.commit()
+
+        try:
+            queue_booking_transition_ari_sync(
+                old_property_id=booking.property_id,
+                old_room_id=booking.room_id,
+                old_check_in=booking.check_in,
+                old_check_out=booking.check_out,
+                booking=booking,
+                reason='booking_checked_out',
+            )
+        except Exception as sync_err:
+            logging.warning(f"Failed to sync checkout to PMS: {sync_err}")
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Booking status updated to CHECKED OUT.'
+        })), 200
+
+    except Exception as e:
+        logging.exception("Error in check_out_booking: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to update booking status.'
+        })), 500
+
+
+@api.route('/properties/<int:property_id>/bookings/check_extension', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_bookings')
+def check_extension(property_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        data = request.get_json()
+        room_id = data.get('room_id')
+        current_check_out_str = data.get('current_check_out')
+        new_check_out_str = data.get('new_check_out')
+
+        if not all([room_id, current_check_out_str, new_check_out_str]):
+            return make_response(jsonify({'status': 'fail', 'message': 'Missing required fields'})), 400
+
+        current_check_out = datetime.strptime(current_check_out_str, '%Y-%m-%d').date()
+        new_check_out = datetime.strptime(new_check_out_str, '%Y-%m-%d').date()
+
+        if new_check_out <= current_check_out:
+            return make_response(
+                jsonify({'status': 'fail', 'message': 'New check-out must be after current check-out'})), 400
+
+        # Step 1: Verify Availability
+        overlapping_bookings = db.session.query(Booking).filter(
+            Booking.property_id == property_id,
+            Booking.room_id == room_id,
+            Booking.status_id != 5,  # Exclude cancelled
+            Booking.check_in < new_check_out,
+            Booking.check_out > current_check_out
+        ).count()
+
+        if overlapping_bookings > 0:
+            return make_response(jsonify({'status': 'success', 'available': False, 'extra_cost': 0.0})), 200
+
+        # Step 2: Calculate Exact Extra Cost based on RoomOnline daily rates
+        extra_cost = 0.0
+        curr_date = current_check_out
+        while curr_date < new_check_out:
+            room_online = RoomOnline.query.filter_by(room_id=room_id, date=curr_date).first()
+            if room_online:
+                extra_cost += float(room_online.price)
+            curr_date += timedelta(days=1)
+
+        return make_response(jsonify({
+            'status': 'success',
+            'available': True,
+            'extra_cost': extra_cost
+        })), 200
+
+    except Exception as e:
+        logging.exception("Error in check_extension: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to check extension availability.'})), 500
+
+
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/extend', methods=['POST', 'OPTIONS'],
+           strict_slashes=False)
+@require_permission('manage_bookings')
+def extend_booking(property_id, booking_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        data = request.get_json()
+        new_check_out_str = data.get('new_check_out')
+        is_paid = data.get('is_paid', False)
+        extra_cost = float(data.get('extra_cost', 0.0))
+
+        if not new_check_out_str:
+            return make_response(jsonify({'status': 'fail', 'message': 'New check-out date is required.'})), 400
+
+        booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
+        if not booking:
+            return make_response(jsonify({'status': 'fail', 'message': 'Booking not found.'})), 404
+
+        new_check_out = datetime.strptime(new_check_out_str, '%Y-%m-%d').date()
+        old_check_out = booking.check_out
+
+        if new_check_out <= old_check_out:
+            return make_response(
+                jsonify({'status': 'fail', 'message': 'New check-out must be after current check-out.'})), 400
+
+        # Step 1: Update core booking dates and total rate
+        booking.check_out = new_check_out
+        booking.check_out_year = new_check_out.year
+        booking.check_out_month = new_check_out.month
+        booking.check_out_day = new_check_out.day
+        booking.number_of_days = (new_check_out - booking.check_in).days
+
+        # Increase the total bill by the extension cost
+        booking.rate = float(booking.rate or 0.0) + extra_cost
+
+        # Step 2: Generate new BookingRate entries for the extended days
+        curr_date = old_check_out
+        while curr_date < new_check_out:
+            room_online = RoomOnline.query.filter_by(room_id=booking.room_id, date=curr_date).first()
+            nightly_rate = room_online.price if room_online else 0.0
+
+            booking.booking_rates.append(
+                BookingRate(
+                    booking_id=booking.id,
+                    rate_date=curr_date,
+                    nightly_rate=nightly_rate,
+                )
+            )
+            curr_date += timedelta(days=1)
+
+        # 👉 Step 3: THE NEW FINANCIAL LOGIC
+        # If the user checked the box saying "Guest paid the extra amount now"
+        if is_paid and extra_cost > 0:
+            booking.amount_paid = float(booking.amount_paid or 0.0) + extra_cost
+
+        # Auto-resolve the status!
+        booking.update_payment_status()
+
+        db.session.commit()
+
+        # Step 4: Notify Channel Manager / PMS sync that dates have shifted
+        try:
+            queue_booking_transition_ari_sync(
+                old_property_id=booking.property_id,
+                old_room_id=booking.room_id,
+                old_check_in=booking.check_in,
+                old_check_out=old_check_out,
+                booking=booking,
+                reason='booking_extended',
+            )
+        except Exception as sync_err:
+            logging.warning(f"Failed to sync extension to PMS: {sync_err}")
+
+        return make_response(jsonify({'status': 'success', 'message': 'Booking extended successfully.'})), 200
+
+    except Exception as e:
+        logging.exception("Error in extend_booking: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to extend booking.'})), 500
+
+
 @api.route('/properties/<int:property_id>/bookings/by_state', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('view_bookings')
 def bookings_by_date_and_state(property_id):
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -367,7 +557,6 @@ def bookings_by_date_and_state(property_id):
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('view_bookings')
 def get_booking_by_id(property_id, booking_id):
-    # 1. INSTANT CORS PREFLIGHT APPROVAL
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
@@ -425,11 +614,16 @@ def assign_nightly_rates(booking):
 
     booking.rate = total
 
-    # 1. Fetch Chat History
+
+# ==========================================
+# 💬 GUEST COMMUNICATION (CHAT/TWILIO)
+# ==========================================
+
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>/chat', methods=['GET', 'OPTIONS'])
 @require_permission('view_bookings')
 def get_chat_history(property_id, booking_id):
-    if request.method == 'OPTIONS': return make_response(jsonify({"status": "ok"})), 200
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
     messages = GuestMessage.query.filter_by(booking_id=booking_id, property_id=property_id).order_by(
         GuestMessage.timestamp.asc()).all()
@@ -443,11 +637,12 @@ def get_chat_history(property_id, booking_id):
 
     return jsonify({'status': 'success', 'data': [m.to_json() for m in messages]}), 200
 
-# 2. Send Message from Hotel
+
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>/chat', methods=['POST', 'OPTIONS'])
 @require_permission('manage_bookings')
 def send_chat_message(property_id, booking_id):
-    if request.method == 'OPTIONS': return make_response(jsonify({"status": "ok"})), 200
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
 
     data = request.get_json()
     message_body = data.get('message')
@@ -471,7 +666,7 @@ def send_chat_message(property_id, booking_id):
 
     return jsonify({'status': 'success', 'message': 'Message queued.'}), 200
 
-# 3. Webhook to RECEIVE replies from Guests (Twilio calls this)
+
 @api.route('/webhooks/twilio/receive', methods=['POST'])
 def twilio_webhook():
     # Twilio sends data as form-urlencoded
@@ -497,8 +692,6 @@ def twilio_webhook():
         )
         db.session.add(inbound_msg)
         db.session.commit()
-
-        # Optional: Trigger a WebSocket/Pusher event here to notify the Flutter app instantly
 
     # Twilio requires an empty TwiML response to acknowledge receipt
     from twilio.twiml.messaging_response import MessagingResponse

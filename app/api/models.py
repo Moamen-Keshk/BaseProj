@@ -631,16 +631,24 @@ class PaymentStatus(db.Model):
 
     @staticmethod
     def insert_status():
+        # Standardized, real-world payment statuses for a booking/PMS system
         status = {
-            'Paid': ['PAID', 'Green'],
-            'Unpaid': ['UNPAID', 'Red'],
-            'POA': ['POA', 'Yellow'],
-            'Suspended': ['SUSPENDED', 'Purple']
+            'Pending': ['PENDING', 'Orange'],               # Invoice created, awaiting payment
+            'Authorized': ['AUTHORIZED', 'Cyan'],           # Card pre-authorized/funds held, not yet captured
+            'Partially Paid': ['PARTIALLY_PAID', 'Purple'], # Deposit paid, balance remaining
+            'Paid': ['PAID', 'Green'],                      # Fully paid / Completed
+            'Failed': ['FAILED', 'Red'],                    # Payment attempt declined/failed
+            'Refunded': ['REFUNDED', 'Gray'],               # Money returned to the guest
+            'Cancelled': ['CANCELLED', 'Black']             # Invoice voided/cancelled before payment
         }
         for s in status:
             stat = PaymentStatus.query.filter_by(name=s).first()
             if stat is None:
                 stat = PaymentStatus(name=s, code=status[s][0], color=status[s][1])
+            else:
+                # Optional: Update existing records if the code/color changed
+                stat.code = status[s][0]
+                stat.color = status[s][1]
             db.session.add(stat)
         db.session.commit()
 
@@ -690,6 +698,9 @@ class Booking(db.Model):
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
     creator_id = db.Column(db.String(32))
 
+    # 👉 NEW: Store the exact amount paid so far
+    amount_paid = db.Column(db.Float, default=0.0)
+
     booking_rates = db.relationship(
         'BookingRate',
         cascade='all, delete-orphan',
@@ -698,7 +709,8 @@ class Booking(db.Model):
 
     def __init__(self, **kwargs):
         super(Booking, self).__init__(**kwargs)
-        self.confirmation_number = self.generate_confirmation_number()
+        if not self.confirmation_number:
+            self.confirmation_number = self.generate_confirmation_number()
 
     @staticmethod
     def generate_confirmation_number():
@@ -706,6 +718,25 @@ class Booking(db.Model):
             number = random.randint(100000, 999999)
             if not Booking.query.filter_by(confirmation_number=number).first():
                 return number
+
+    # 👉 NEW: Dynamically calculate what is owed
+    @property
+    def balance_due(self):
+        # Prevent negative balances if they overpaid, or handle it as credit
+        return max(0.0, float(self.rate or 0.0) - float(self.amount_paid or 0.0))
+
+    # 👉 NEW: Auto-resolve the status based on balances
+    def update_payment_status(self):
+        paid_status = PaymentStatus.query.filter_by(code='PAID').first()
+        partial_status = PaymentStatus.query.filter_by(code='PARTIALLY_PAID').first()
+        pending_status = PaymentStatus.query.filter_by(code='PENDING').first()
+
+        if self.balance_due <= 0:
+            self.payment_status_id = paid_status.id if paid_status else self.payment_status_id
+        elif float(self.amount_paid or 0.0) > 0:
+            self.payment_status_id = partial_status.id if partial_status else self.payment_status_id
+        else:
+            self.payment_status_id = pending_status.id if pending_status else self.payment_status_id
 
     def to_json(self):
         return {
@@ -732,6 +763,8 @@ class Booking(db.Model):
             'check_out_year': self.check_out_year,
             'number_of_days': self.number_of_days,
             'rate': self.rate,
+            'amount_paid': float(self.amount_paid or 0.0),    # 👉 Added
+            'balance_due': self.balance_due,                  # 👉 Added
             'property_id': self.property_id,
             'room_id': self.room_id,
             'creator_id': self.creator_id,
@@ -775,6 +808,7 @@ class Booking(db.Model):
             check_out_year=json_booking.get('check_out_year'),
             number_of_days=json_booking.get('number_of_days'),
             rate=json_booking.get('rate'),
+            amount_paid=json_booking.get('amount_paid', 0.0), # 👉 Added
             property_id=json_booking.get('property_id'),
             room_id=json_booking.get('room_id'),
             creator_id=json_booking.get('creator_id'),

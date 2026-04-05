@@ -13,13 +13,14 @@ from . import (
     rooms,
     properties,
     categories,
-    all_status,
+    payment_status,
     rate_plan,
     season,
     room_online,
     blocks,
     users,
-    amenities
+    amenities,
+booking_status
 )
 
 # 3. Inject the new PMSPermission into your templates
