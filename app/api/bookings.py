@@ -36,12 +36,29 @@ def new_booking(property_id):
             print(str(ve))
             return make_response(jsonify({'status': 'fail', 'message': str(ve)})), 400
 
+        # ---> Prevent Overbooking / Double Bookings <---
+        is_available = check_room_availability(
+            room_id=booking.room_id,
+            check_in=booking.check_in,
+            check_out=booking.check_out
+        )
+
+        if not is_available:
+            return make_response(jsonify({
+                "status": "error",
+                "message": "The selected room is already booked for these dates. Please choose different dates or another room."
+            })), 409
+
         # Force the property_id from the secured URL to prevent payload tampering
         booking.property_id = property_id
         booking.creator_id = user_id
 
         assign_nightly_rates(booking)
         db.session.add(booking)
+
+        # Apply the housekeeping rule for same-day check-ins
+        handle_same_day_checkin_housekeeping(booking)
+
         db.session.commit()
 
         if booking.email:
@@ -142,21 +159,19 @@ def edit_booking(property_id, booking_id):
         else:
             new_check_out = new_check_out_str
 
-        # Query to find overlapping bookings (excluding current booking & canceled)
-        overlapping_bookings = db.session.query(Booking).filter(
-            Booking.property_id == property_id,
-            Booking.room_id == new_room_id,
-            Booking.id != booking.id,  # Exclude self
-            Booking.status_id != 5,    # Exclude canceled bookings
-            Booking.check_in < new_check_out,
-            Booking.check_out > new_check_in
-        ).count()
+        # Use the reusable helper to check for overlaps, excluding this specific booking ID
+        is_available = check_room_availability(
+            room_id=new_room_id,
+            check_in=new_check_in,
+            check_out=new_check_out,
+            exclude_booking_id=booking.id
+        )
 
-        if overlapping_bookings > 0:
+        if not is_available:
             return make_response(jsonify({
-                'status': 'fail',
-                'message': 'The selected room is not available for the updated dates.'
-            })), 400
+                "status": "error",
+                "message": "The selected room is already booked for these dates. Please choose different dates or another room."
+            })), 409
         # ==========================================
 
         # Update fields dynamically (amount_paid is already supported here)
@@ -177,6 +192,8 @@ def edit_booking(property_id, booking_id):
 
         # Automatically resolve the payment status after any rate or payment changes
         booking.update_payment_status()
+
+        handle_same_day_checkin_housekeeping(booking)
 
         db.session.commit()
 
@@ -654,6 +671,75 @@ def assign_nightly_rates(booking):
 
     booking.rate = total
 
+
+from app.api.models import User, RoomCleaningLog
+
+
+def handle_same_day_checkin_housekeeping(booking):
+    """
+    Automatically updates room cleaning status from 'Clean' to 'Refresh'
+    if a booking is created/edited for a same-day check-in, provided
+    no other booking checks out of that room today.
+    """
+    today = datetime.today().date()
+
+    # 1. Check if the check-in is scheduled for today
+    if booking.check_in == today:
+        room = db.session.query(Room).filter_by(id=booking.room_id).first()
+
+        clean_status_id = Constants.RoomCleaningStatusCoding.get('Clean')
+        refresh_status_id = Constants.RoomCleaningStatusCoding.get('Refresh')
+
+        # 2. Check if the room is currently clean
+        if room and room.cleaning_status_id == clean_status_id:
+
+            # 3. Verify no other booking is checking out today
+            checkout_today = db.session.query(Booking).filter(
+                Booking.room_id == booking.room_id,
+                Booking.check_out == today,
+                Booking.id != booking.id,  # Exclude the current booking
+                Booking.status_id != 5  # 5 = Canceled (exclude canceled bookings)
+            ).first()
+
+            if not checkout_today:
+                # Update Room Status
+                old_status = room.cleaning_status_id
+                room.cleaning_status_id = refresh_status_id
+                db.session.add(room)
+
+                # Maintain Audit Log
+                user = db.session.query(User).filter_by(uid=booking.creator_id).first()
+                user_name = user.username if user else "System Auto-Refresh"
+
+                cleaning_log = RoomCleaningLog(
+                    property_id=booking.property_id,
+                    room_id=room.id,
+                    user_name=user_name,
+                    old_status_id=old_status,
+                    new_status_id=refresh_status_id
+                )
+                db.session.add(cleaning_log)
+
+def check_room_availability(room_id, check_in, check_out, exclude_booking_id=None):
+    """
+    Checks if a room is available for the given dates.
+    Returns True if available, False if there is an overlapping booking.
+    """
+    # Base query: same room, exclude canceled bookings (assuming status_id 5 is Canceled)
+    query = db.session.query(Booking).filter(
+        Booking.room_id == room_id,
+        Booking.status_id != 5,
+        Booking.check_in < check_out,  # New booking starts before existing ends
+        Booking.check_out > check_in  # New booking ends after existing starts
+    )
+
+    # If editing an existing booking, exclude it from the overlap check
+    if exclude_booking_id:
+        query = query.filter(Booking.id != exclude_booking_id)
+
+    conflicting_booking = query.first()
+
+    return conflicting_booking is None
 
 # ==========================================
 # 💬 GUEST COMMUNICATION (CHAT/TWILIO)

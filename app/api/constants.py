@@ -101,10 +101,12 @@ class Constants:
         'Refresh': 4,
         'Service': 5,
         'Idle': 6,
+        'Ready': 7,
         1: 'Dirty',
         2: 'Waiting',
         3: 'Clean',
         4: 'Refresh',
         5: 'Service',
-        6: 'Idle'
+        6: 'Idle',
+        7: 'Ready'
     }

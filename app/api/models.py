@@ -1195,7 +1195,8 @@ class RoomCleaningStatus(db.Model):
             'Clean': ['CLEAN', 'green'],
             'Refresh': ['REFRESH', 'blue'],
             'Service': ['SERVICE', 'purple'],
-            'Idle': ['IDLE', 'gray']
+            'Idle': ['IDLE', 'gray'],
+            'Ready': ['READY', 'teal']
         }
         for s in status:
             stat = RoomCleaningStatus.query.filter_by(name=s).first()
