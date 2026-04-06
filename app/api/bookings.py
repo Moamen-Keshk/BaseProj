@@ -111,7 +111,6 @@ def edit_booking(property_id, booking_id):
     try:
         booking_data = request.get_json()
 
-        # Removed creator_id check. Any staff with 'manage_bookings' can edit now.
         booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
         if not booking:
             return make_response(jsonify({
@@ -124,7 +123,42 @@ def edit_booking(property_id, booking_id):
         old_check_in = booking.check_in
         old_check_out = booking.check_out
 
-        # Update fields dynamically (Added 'amount_paid')
+        # ==========================================
+        # NEW: VERIFY AVAILABILITY BEFORE UPDATING
+        # ==========================================
+        new_room_id = booking_data.get('room_id', booking.room_id)
+        new_check_in_str = booking_data.get('check_in', str(booking.check_in))
+        new_check_out_str = booking_data.get('check_out', str(booking.check_out))
+
+        # Safely convert incoming strings to Date objects
+        if isinstance(new_check_in_str, str):
+            new_check_in = datetime.strptime(new_check_in_str[:10], '%Y-%m-%d').date()
+        else:
+            new_check_in = new_check_in_str
+
+        if isinstance(new_check_out_str, str):
+            new_check_out = datetime.strptime(new_check_out_str[:10], '%Y-%m-%d').date()
+        else:
+            new_check_out = new_check_out_str
+
+        # Query to find overlapping bookings (excluding current booking & cancelled)
+        overlapping_bookings = db.session.query(Booking).filter(
+            Booking.property_id == property_id,
+            Booking.room_id == new_room_id,
+            Booking.id != booking.id,  # Exclude self
+            Booking.status_id != 5,    # Exclude cancelled bookings
+            Booking.check_in < new_check_out,
+            Booking.check_out > new_check_in
+        ).count()
+
+        if overlapping_bookings > 0:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'The selected room is not available for the updated dates.'
+            })), 400
+        # ==========================================
+
+        # Update fields dynamically (amount_paid is already supported here)
         updateable_fields = [
             'first_name', 'last_name', 'email', 'phone', 'number_of_adults',
             'number_of_children', 'payment_status_id', 'status_id', 'note',
@@ -140,7 +174,7 @@ def edit_booking(property_id, booking_id):
         BookingRate.query.filter_by(booking_id=booking.id).delete()
         assign_nightly_rates(booking)
 
-        # 👉 Automatically resolve the payment status after any rate or payment changes
+        # Automatically resolve the payment status after any rate or payment changes
         booking.update_payment_status()
 
         db.session.commit()
