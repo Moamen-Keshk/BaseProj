@@ -1,9 +1,8 @@
 from app.api.email import send_email
 from app.celery_app import celery
-from app.api.models import Booking, Property, GuestMessage
+from app.api.models import Booking, Property
 import os
 from twilio.rest import Client
-from app import db
 
 @celery.task
 def send_booking_email_task(booking_id, property_id):
@@ -36,7 +35,7 @@ def send_guest_message(email, subject, message_body, property_id, first_name, la
 
 
 @celery.task
-def send_sms_whatsapp_task(booking_id, property_id, message_body, channel='whatsapp'):
+def send_sms_whatsapp_task(booking_id, message_body, channel='whatsapp'):
     booking = Booking.query.get(booking_id)
     if not booking or not booking.phone:
         return "No phone number available"

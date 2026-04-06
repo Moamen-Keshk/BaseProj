@@ -5,10 +5,11 @@ from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_
 
 from . import api
-from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage
+from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage, Room
 from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
+from app.api.constants import Constants
 
 # --- CHANNEL MANAGER IMPORTS ---
 from app.api.channel_manager.models import ChannelReservationLink
@@ -44,7 +45,7 @@ def new_booking(property_id):
         db.session.commit()
 
         if booking.email:
-            from app.api.utils.guest_communication import send_booking_email_task
+            from app.api.utils.guest_communication_task import send_booking_email_task
             send_booking_email_task.delay(booking_id=booking.id, property_id=property_id)
 
         queue_booking_ari_sync(booking, 'booking_created')
@@ -84,7 +85,7 @@ def send_guest_message(property_id, booking_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Booking or guest email not found.'})), 404
 
         # Send the custom email
-        from app.api.utils.guest_communication import send_guest_message
+        from app.api.utils.guest_communication_task import send_guest_message
         send_guest_message.delay(
             email=booking.email,
             subject=f"{subject} DO NOT REPLY",
@@ -141,12 +142,12 @@ def edit_booking(property_id, booking_id):
         else:
             new_check_out = new_check_out_str
 
-        # Query to find overlapping bookings (excluding current booking & cancelled)
+        # Query to find overlapping bookings (excluding current booking & canceled)
         overlapping_bookings = db.session.query(Booking).filter(
             Booking.property_id == property_id,
             Booking.room_id == new_room_id,
             Booking.id != booking.id,  # Exclude self
-            Booking.status_id != 5,    # Exclude cancelled bookings
+            Booking.status_id != 5,    # Exclude canceled bookings
             Booking.check_in < new_check_out,
             Booking.check_out > new_check_in
         ).count()
@@ -358,6 +359,11 @@ def check_out_booking(property_id, booking_id):
             })), 500
 
         booking.change_status(checked_out_status.id)
+
+        room = db.session.query(Room).filter_by(id=booking.room_id).first()
+        if room:
+            room.cleaning_status_id = Constants.RoomCleaningStatusCoding['Dirty']
+
         db.session.commit()
 
         try:
@@ -695,7 +701,7 @@ def send_chat_message(property_id, booking_id):
     db.session.commit()
 
     # 2. Queue Twilio delivery in the background
-    from app.api.utils.guest_communication import send_sms_whatsapp_task
+    from app.api.utils.guest_communication_task import send_sms_whatsapp_task
     send_sms_whatsapp_task.delay(booking_id, property_id, message_body, channel)
 
     return jsonify({'status': 'success', 'message': 'Message queued.'}), 200

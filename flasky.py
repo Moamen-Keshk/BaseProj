@@ -30,7 +30,7 @@ from app.api.models import (
     RoomStatus,
     PaymentStatus,
     Category,
-    BookingStatus, Amenity,
+    BookingStatus, Amenity, RoomCleaningStatus
 )
 
 from app.api.channel_manager.models import SupportedChannel
@@ -51,7 +51,9 @@ def make_shell_context():
         PaymentStatus=PaymentStatus,
         BookingStatus=BookingStatus,
         Category=Category,
-        SupportedChannel=SupportedChannel
+        SupportedChannel=SupportedChannel,
+        RoomCleaningStatus=RoomCleaningStatus,
+        Amenity=Amenity
     )
 
 
@@ -119,5 +121,6 @@ def deploy():
     Category.insert_categories()
     SupportedChannel.insert_channels()
     Amenity.insert_default_amenities()
+    RoomCleaningStatus.insert_status()
 
     print('Deployment tasks completed successfully.')

@@ -20,7 +20,8 @@ from . import (
     blocks,
     users,
     amenities,
-booking_status
+booking_status,
+housekeeping
 )
 
 # 3. Inject the new PMSPermission into your templates

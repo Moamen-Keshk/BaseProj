@@ -1,7 +1,7 @@
 import logging
 from flask import request, make_response, jsonify
 from . import api
-from app.api.models import Room
+from app.api.models import Room, RoomCleaningLog
 from .. import db
 from app.api.decorators import require_permission, require_active_staff
 
@@ -79,38 +79,37 @@ def edit_room(property_id, room_id):
 @api.route('/properties/<int:property_id>/rooms/<int:room_id>/status', methods=['PUT'])
 @require_permission('update_room_status')
 def update_room_status(property_id, room_id):
-    """Dedicated route for Housekeeping and Front Desk to mark rooms Clean/Dirty"""
     try:
         room_data = request.get_json()
-
         room = db.session.query(Room).filter_by(id=room_id, property_id=property_id).first()
-        if not room:
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'Room not found in this property.'
-            })), 404
 
-        if 'status_id' in room_data:
-            room.status_id = room_data['status_id']
+        if not room:
+            return make_response(jsonify({'status': 'fail', 'message': 'Room not found.'})), 404
+
+        # Extract user info from your authentication context (Firebase token)
+        # E.g., user_name = g.current_user.name OR passed from the frontend request
+        user_name = room_data.get('user_name', 'Unknown User')
+
+        if 'cleaning_status_id' in room_data and room.cleaning_status_id != room_data['cleaning_status_id']:
+            old_status = room.cleaning_status_id
+            new_status = room_data['cleaning_status_id']
+            room.cleaning_status_id = new_status
+
+            # Record the change
+            log_entry = RoomCleaningLog(
+                property_id=property_id,
+                room_id=room.id,
+                user_name=user_name,
+                old_status_id=old_status,
+                new_status_id=new_status
+            )
+            db.session.add(log_entry)
             db.session.commit()
 
-            return make_response(jsonify({
-                'status': 'success',
-                'message': 'Room status updated successfully.'
-            })), 200
-        else:
-            return make_response(jsonify({
-                'status': 'fail',
-                'message': 'status_id is required.'
-            })), 400
-
+        return make_response(jsonify({'status': 'success', 'message': 'Status updated.'})), 200
     except Exception as e:
-        logging.exception("Error in update_room_status: %s", str(e))
         db.session.rollback()
-        return make_response(jsonify({
-            'status': 'error',
-            'message': 'Failed to update room status. Please try again.'
-        })), 500
+        return make_response(jsonify({'status': 'error', 'message': str(e)})), 500
 
 
 @api.route('/properties/<int:property_id>/rooms', methods=['GET'])

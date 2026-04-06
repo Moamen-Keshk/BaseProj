@@ -547,6 +547,7 @@ class Room(db.Model):
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'))
     floor_id = db.Column(db.Integer, db.ForeignKey('floors.id'))
     status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), default=1)
+    cleaning_status_id = db.Column(db.Integer, db.ForeignKey('room_cleaning_status.id'), default=3)
 
     def __init__(self, **kwargs):
         super(Room, self).__init__(**kwargs)
@@ -558,7 +559,8 @@ class Room(db.Model):
             'property_id': self.property_id,
             'category_id': self.category_id,
             'floor_id': self.floor_id,
-            'status_id': self.status_id
+            'status_id': self.status_id,
+            'cleaning_status_id': self.cleaning_status_id
         }
         return json_room
 
@@ -569,7 +571,9 @@ class Room(db.Model):
         category_id = json_room.get('category_id')
         floor_id = json_room.get('floor_id')
         status_id = json_room.get('status_id')
-        return Room(room_number=room_number, property_id=property_id, category_id=category_id, floor_id=floor_id, status_id=status_id)
+        cleaning_status_id = json_room.get('cleaning_status_id', 3)
+        return Room(room_number=room_number, property_id=property_id, category_id=category_id,
+                    floor_id=floor_id, status_id=status_id, cleaning_status_id=cleaning_status_id)
 
 
 class RoomStatus(db.Model):
@@ -1174,3 +1178,51 @@ class Amenity(db.Model):
             if not Amenity.query.filter_by(name=name).first():
                 db.session.add(Amenity(name=name))
         db.session.commit()
+
+# Add this near your RoomStatus model in app/api/models.py
+class RoomCleaningStatus(db.Model):
+    __tablename__ = 'room_cleaning_status'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(64), unique=True)
+    name = db.Column(db.String(64), unique=True)
+    color = db.Column(db.String(64))
+
+    @staticmethod
+    def insert_status():
+        status = {
+            'Dirty': ['DIRTY', 'red'],
+            'Waiting': ['WAITING', 'orange'],
+            'Clean': ['CLEAN', 'green'],
+            'Refresh': ['REFRESH', 'blue'],
+            'Service': ['SERVICE', 'purple'],
+            'Idle': ['IDLE', 'gray']
+        }
+        for s in status:
+            stat = RoomCleaningStatus.query.filter_by(name=s).first()
+            if stat is None:
+                stat = RoomCleaningStatus(name=s, code=status[s][0], color=status[s][1])
+            db.session.add(stat)
+        db.session.commit()
+
+class RoomCleaningLog(db.Model):
+    __tablename__ = 'room_cleaning_log'
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
+    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
+
+    # Track the user making the change (assuming you decode Firebase tokens into a User model or pass a UID)
+    user_name = db.Column(db.String(128))
+
+    old_status_id = db.Column(db.Integer)
+    new_status_id = db.Column(db.Integer)
+    timestamp = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'room_id': self.room_id,
+            'user_name': self.user_name,
+            'old_status_id': self.old_status_id,
+            'new_status_id': self.new_status_id,
+            'timestamp': self.timestamp.isoformat() + 'Z'
+        }

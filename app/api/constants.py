@@ -93,3 +93,18 @@ class Constants:
         'Front Desk': 20,
         'Housekeeping': 10
             }
+
+    RoomCleaningStatusCoding = {
+        'Dirty': 1,
+        'Waiting': 2,
+        'Clean': 3,
+        'Refresh': 4,
+        'Service': 5,
+        'Idle': 6,
+        1: 'Dirty',
+        2: 'Waiting',
+        3: 'Clean',
+        4: 'Refresh',
+        5: 'Service',
+        6: 'Idle'
+    }
