@@ -2,6 +2,7 @@ from app.api.channel_manager.adapters.base import BaseChannelAdapter
 import uuid
 from datetime import datetime, timedelta
 
+
 class DummyAdapter(BaseChannelAdapter):
     """
     A fake adapter to test the PMS mapping and sync jobs without needing real OTA credentials.
@@ -40,13 +41,13 @@ class DummyAdapter(BaseChannelAdapter):
         check_in = datetime.now().strftime("%Y-%m-%d")
         check_out = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
 
-        # Mimic a standard OTA JSON payload
+        # Mimic a standard OTA JSON payload with VCC details included
         fake_reservation = {
             "external_reservation_id": fake_res_id,
             "status": "confirmed",
             "guest": {
                 "first_name": "John",
-                "last_name": "Doe (Test Guest)",
+                "last_name": "Doe (VCC Test)",
                 "email": "john.test@dummyota.com",
                 "phone": "+15551234567"
             },
@@ -59,12 +60,23 @@ class DummyAdapter(BaseChannelAdapter):
                     "check_out_date": check_out,
                     "guests": 2,
                     "price": 250.00,
-                    "currency": "USD"
+                    "currency": "GBP"
                 }
             ],
             "total_price": 250.00,
-            "currency": "USD",
-            "booked_at": datetime.now().isoformat()
+            "currency": "GBP",
+            "booked_at": datetime.now().isoformat(),
+
+            # 👇 NEW: The injected VCC Details
+            "payment_card": {
+                "card_type": "Virtual Credit Card",
+                "card_holder": "Dummy OTA VCC",
+                "card_number": "5555444433332222",  # Test Card
+                "expiration_month": "12",
+                "expiration_year": "2028",
+                "cvc": "123",
+                "is_virtual": True
+            }
         }
 
         return {
@@ -73,10 +85,10 @@ class DummyAdapter(BaseChannelAdapter):
         }
 
     def acknowledge_reservation(
-        self,
-        connection,
-        external_reservation_id: str,
-        payload: dict | None = None,
+            self,
+            connection,
+            external_reservation_id: str,
+            payload: dict | None = None,
     ) -> dict:
         """
         Pretends to tell the OTA that we successfully saved the reservation in our PMS.

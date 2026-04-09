@@ -5,8 +5,9 @@ from flask import request, jsonify, current_app
 from sqlalchemy.exc import SQLAlchemyError
 from app.api.models import db, Booking
 from app.api.decorators import require_auth
-from app.api.payments.models import Transaction
+from app.api.payments.models import Transaction, BookingVCC
 from . import payments_bp
+from .utils import decrypt_data
 
 @payments_bp.route('/create-payment-intent', methods=['POST'])
 @require_auth
@@ -88,3 +89,28 @@ def stripe_webhook():
             db.session.commit()
 
     return jsonify(success=True), 200
+
+
+# 👇 USE YOUR APP'S ACTUAL AUTH DECORATOR
+from app.api.decorators import require_auth
+
+
+@payments_bp.route('/vcc/<int:booking_id>', methods=['GET'])
+@require_auth  # 👇 SECURE IT WITH YOUR DECORATOR
+def get_vcc_details(booking_id):
+    vcc_record = BookingVCC.query.filter_by(booking_id=booking_id).first()
+
+    if not vcc_record:
+        return jsonify({"has_vcc": False}), 200
+
+    # Decrypt only at the moment of request
+    card_number = decrypt_data(vcc_record.encrypted_card_number)
+    cvc = decrypt_data(vcc_record.encrypted_cvc)
+
+    return jsonify({
+        "has_vcc": True,
+        "card_number": card_number,
+        "exp_month": vcc_record.exp_month,
+        "exp_year": vcc_record.exp_year,
+        "cvc": cvc
+    }), 200

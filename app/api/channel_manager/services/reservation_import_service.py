@@ -3,6 +3,10 @@ from app import db
 from app.api.channel_manager.models import ChannelReservationLink, ChannelRoomMap
 from app.api.models import Booking
 
+# 👉 IMPORT THE VCC MODEL AND ENCRYPTION UTILITY
+from app.api.payments.models import BookingVCC
+from app.api.payments.utils import encrypt_data
+
 
 class ReservationImportService:
     @staticmethod
@@ -84,6 +88,31 @@ class ReservationImportService:
 
                     link.status = 'modified'
 
+                    db.session.flush()  # Ensure booking updates are flushed before VCC checks
+
+                    # 👉 NEW: Update or Add VCC Data during a modification
+                    card_data = reservation_payload.get('payment_card')
+                    if card_data and card_data.get('is_virtual'):
+                        existing_vcc = BookingVCC.query.filter_by(booking_id=booking.id).first()
+
+                        encrypted_card = encrypt_data(card_data.get('card_number'))
+                        encrypted_cvc = encrypt_data(card_data.get('cvc'))
+
+                        if existing_vcc:
+                            existing_vcc.encrypted_card_number = encrypted_card
+                            existing_vcc.encrypted_cvc = encrypted_cvc
+                            existing_vcc.exp_month = card_data.get('expiration_month')
+                            existing_vcc.exp_year = card_data.get('expiration_year')
+                        else:
+                            new_vcc = BookingVCC(
+                                booking_id=booking.id,
+                                encrypted_card_number=encrypted_card,
+                                encrypted_cvc=encrypted_cvc,
+                                exp_month=card_data.get('expiration_month'),
+                                exp_year=card_data.get('expiration_year')
+                            )
+                            db.session.add(new_vcc)
+
                 db.session.commit()
 
                 from app.api.channel_manager.services.pms_sync import queue_booking_ari_sync
@@ -127,20 +156,28 @@ class ReservationImportService:
 
             booking.number_of_days = (check_out_date - check_in_date).days
 
-        # Payment/VCC Mapping
-        payment_info = reservation_payload.get('payment_info', {})
-        if payment_info and payment_info.get('card_number'):
-            try:
-                secure_stripe_token = "tok_123456789"
-                if hasattr(booking, 'stripe_token'):
-                    booking.stripe_token = secure_stripe_token
-                if payment_info.get('is_vcc') and hasattr(booking, 'is_ota_vcc'):
-                    booking.is_ota_vcc = True
-            except Exception as e:
-                print(f"Failed to tokenize OTA card: {e}")
-
         db.session.add(booking)
-        db.session.flush()  # Flush to generate the booking.id for the link
+        db.session.flush()  # Flush to generate the booking.id for the link and VCC
+
+        # 👉 NEW: Extract and Encrypt VCC Data for New Bookings
+        card_data = reservation_payload.get('payment_card')
+        if card_data and card_data.get('is_virtual'):
+            try:
+                new_vcc = BookingVCC(
+                    booking_id=booking.id,
+                    encrypted_card_number=encrypt_data(card_data.get('card_number')),
+                    encrypted_cvc=encrypt_data(card_data.get('cvc')),
+                    exp_month=card_data.get('expiration_month'),
+                    exp_year=card_data.get('expiration_year')
+                )
+                db.session.add(new_vcc)
+
+                # Flag the booking model directly if it has this attribute
+                if hasattr(booking, 'is_ota_vcc'):
+                    booking.is_ota_vcc = True
+
+            except Exception as e:
+                print(f"Failed to encrypt and save OTA VCC: {e}")
 
         # Create the OTA Link
         link = ChannelReservationLink(

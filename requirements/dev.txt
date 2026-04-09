@@ -11,3 +11,4 @@ celery-types
 celery[redis]
 twilio
 stripe
+flask_jwt_extended

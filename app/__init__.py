@@ -55,7 +55,7 @@ def create_app(config_name):
     from .api.channel_manager import channel_manager as channel_manager_blueprint
     app.register_blueprint(channel_manager_blueprint, url_prefix='/channel_manager')
 
-    from api.payments import payments_bp as payments_blueprint
+    from .api.payments import payments_bp as payments_blueprint
     app.register_blueprint(payments_blueprint, url_prefix='/payments')
 
     return app

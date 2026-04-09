@@ -16,3 +16,18 @@ class Transaction(db.Model):
 
     # Establish relationship to Booking model
     booking = db.relationship('Booking', backref=db.backref('transactions', lazy=True))
+
+
+class BookingVCC(db.Model):
+    __tablename__ = 'booking_vcc'
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=False)
+
+    # Store encrypted strings!
+    encrypted_card_number = db.Column(db.String(255), nullable=False)
+    encrypted_cvc = db.Column(db.String(255), nullable=False)
+
+    exp_month = db.Column(db.String(2), nullable=False)
+    exp_year = db.Column(db.String(4), nullable=False)
+    activation_date = db.Column(db.DateTime, nullable=True)  # VCCs often have activation dates
