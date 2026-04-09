@@ -170,8 +170,8 @@ class User(UserMixin, db.Model):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
             data = s.loads(token.encode('utf-8'))
-        except Exception as e:
-            logging.exception(e)
+        except (AttributeError, BadSignature, SignatureExpired, TypeError, ValueError) as exc:
+            logging.exception(exc)
             return False
         if data.get('confirm') != self.uid:
             return False
@@ -188,8 +188,8 @@ class User(UserMixin, db.Model):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
             data = s.loads(token.encode('utf-8'))
-        except Exception as e:
-            logging.exception(e)
+        except (AttributeError, BadSignature, SignatureExpired, TypeError, ValueError) as exc:
+            logging.exception(exc)
             return False
         user = User.query.get(data.get('reset'))
         if user is None:
@@ -206,8 +206,8 @@ class User(UserMixin, db.Model):
         s = Serializer(current_app.config['SECRET_KEY'])
         try:
             data = s.loads(token.encode('utf-8'))
-        except Exception as e:
-            logging.exception(e)
+        except (AttributeError, BadSignature, SignatureExpired, TypeError, ValueError) as exc:
+            logging.exception(exc)
             return False
         if data.get('change_email') != self.uid:
             return False
@@ -1227,3 +1227,4 @@ class RoomCleaningLog(db.Model):
             'new_status_id': self.new_status_id,
             'timestamp': self.timestamp.isoformat() + 'Z'
         }
+    

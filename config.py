@@ -37,6 +37,9 @@ class Config:
     TWILIO_SMS_NUMBER = os.environ.get('TWILIO_SMS_NUMBER')
     TWILIO_WHATSAPP_NUMBER = os.environ.get('TWILIO_WHATSAPP_NUMBER')
 
+    STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
+    STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+
     @staticmethod
     def init_app(app):
         os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)

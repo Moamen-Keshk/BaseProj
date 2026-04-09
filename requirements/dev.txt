@@ -10,3 +10,4 @@ celery
 celery-types
 celery[redis]
 twilio
+stripe

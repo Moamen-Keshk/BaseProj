@@ -3,6 +3,8 @@ import logging
 
 from flask import make_response, jsonify, redirect, request
 from flask.views import MethodView
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.exceptions import BadRequest
 
 from app.api.email import send_email
 from app.api.models import User, PropertyInvite, UserPropertyAccess
@@ -10,6 +12,9 @@ from . import auth
 from .utils import get_current_user
 
 from .. import db
+
+
+logger = logging.getLogger(__name__)
 
 
 class RegisterAPI(MethodView):
@@ -81,8 +86,8 @@ class RegisterAPI(MethodView):
                 }
                 return make_response(jsonify(response_object)), 409  # Changed to 409 Conflict
 
-        except Exception as e:
-            logging.exception("Error in registration: %s", str(e))
+        except (AttributeError, BadRequest, SQLAlchemyError, TypeError, ValueError) as exc:
+            logger.exception("Error in registration: %s", exc)
             db.session.rollback()  # Rollback to prevent database locks on crash
             response_object = {
                 'status': 'error',
@@ -125,8 +130,8 @@ def password_reset_request():
             }
             return make_response(jsonify(response_object)), 404
 
-    except Exception as e:
-        logging.exception("Error in password_reset_request: %s", str(e))
+    except (AttributeError, BadRequest, TypeError, ValueError) as exc:
+        logger.exception("Error in password_reset_request: %s", exc)
         return make_response(jsonify({'status': 'error', 'message': 'Failed to process request.'})), 500
 
 
@@ -143,8 +148,8 @@ def password_reset(token):
         else:
             return redirect(os.environ.get('BASE_LINK') + '/home')
 
-    except Exception as e:
-        logging.exception("Error in password_reset: %s", str(e))
+    except (AttributeError, BadRequest, SQLAlchemyError, TypeError, ValueError) as exc:
+        logger.exception("Error in password_reset: %s", exc)
         db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to update password.'})), 500
 
@@ -185,8 +190,8 @@ def change_email_request():
             }
             return make_response(jsonify(response_object)), 401
 
-    except Exception as e:
-        logging.exception("Error in change_email_request: %s", str(e))
+    except (AttributeError, BadRequest, TypeError, ValueError) as exc:
+        logger.exception("Error in change_email_request: %s", exc)
         return make_response(jsonify({'status': 'error', 'message': 'Failed to process request.'})), 500
 
 
@@ -200,8 +205,8 @@ def change_email(token):
         else:
             return redirect(os.environ.get('BASE_LINK') + '/flash/' + 'Link expired, or invalid request£$home')
 
-    except Exception as e:
-        logging.exception("Error in change_email confirmation: %s", str(e))
+    except (AttributeError, SQLAlchemyError, TypeError, ValueError) as exc:
+        logger.exception("Error in change_email confirmation: %s", exc)
         db.session.rollback()
         return redirect(os.environ.get('BASE_LINK') + '/flash/' + 'An error occurred during update£$home')
 
@@ -236,7 +241,7 @@ def change_password():
             }
             return make_response(jsonify(response_object)), 401
 
-    except Exception as e:
-        logging.exception("Error in change_password: %s", str(e))
+    except (AttributeError, BadRequest, SQLAlchemyError, TypeError, ValueError) as exc:
+        logger.exception("Error in change_password: %s", exc)
         db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to update password.'})), 500

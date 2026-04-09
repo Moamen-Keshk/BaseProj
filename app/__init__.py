@@ -1,4 +1,4 @@
-from flask import Flask, request, make_response
+from flask import Flask
 from flask_bootstrap import Bootstrap
 from flask_cors import CORS
 from flask_mail import Mail
@@ -51,7 +51,11 @@ def create_app(config_name):
     from .api import api as api_blueprint
     app.register_blueprint(api_blueprint, url_prefix='/api/v1')
 
+
     from .api.channel_manager import channel_manager as channel_manager_blueprint
     app.register_blueprint(channel_manager_blueprint, url_prefix='/channel_manager')
+
+    from api.payments import payments_bp as payments_blueprint
+    app.register_blueprint(payments_blueprint, url_prefix='/payments')
 
     return app

@@ -7,6 +7,41 @@ from app.api.models import User, UserPropertyAccess
 from app.api.constants import Constants
 
 
+def token_required(f):
+    """
+    Ensures the request includes a valid Firebase bearer token and that the
+    corresponding user exists in the database.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if request.method == 'OPTIONS':
+            return make_response(jsonify({"status": "ok"})), 200
+
+        current_uid = get_current_user()
+        if not current_uid:
+            return make_response(
+                jsonify({'status': 'fail', 'message': 'Unauthorized: Missing or invalid token.'})
+            ), 401
+
+        user = User.query.get(current_uid)
+        if not user:
+            return make_response(
+                jsonify({'status': 'fail', 'message': 'User not found in database.'})
+            ), 404
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def require_auth(f):
+    """
+    Backward-compatible auth-only decorator for routes that just need a valid
+    authenticated user.
+    """
+    return token_required(f)
+
+
 def require_permission(required_permission):
     """
     Ensures the user is Active and their assigned role at the target property
