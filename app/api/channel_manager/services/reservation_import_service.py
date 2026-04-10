@@ -2,6 +2,7 @@ from datetime import datetime
 from app import db
 from app.api.channel_manager.models import ChannelReservationLink, ChannelRoomMap
 from app.api.models import Booking
+from flask_socketio import SocketIO
 
 # 👉 IMPORT THE VCC MODEL AND ENCRYPTION UTILITY
 from app.api.payments.models import BookingVCC
@@ -190,6 +191,18 @@ class ReservationImportService:
         )
         db.session.add(link)
         db.session.commit()
+
+        print(f"🔔 EMITTING TO REDIS FOR PROPERTY: {booking.property_id}")
+        # 👉 Ensure async_mode='threading' is passed here too!
+        external_sio = SocketIO(
+            message_queue='redis://localhost:6379/0',
+            async_mode='threading'
+        )
+
+        external_sio.emit('calendar_updated', {
+            'property_id': booking.property_id,
+            'message': 'New reservation pulled'
+        })
 
         # Trigger PMS Sync
         from app.api.channel_manager.services.pms_sync import queue_booking_ari_sync

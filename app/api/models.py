@@ -711,6 +711,13 @@ class Booking(db.Model):
         back_populates='booking'
     )
 
+    vcc_details = db.relationship(
+        'BookingVCC',
+        backref='booking',
+        lazy=True,
+        cascade='all, delete-orphan'  # <-- THIS IS THE MAGIC FIX
+    )
+
     def __init__(self, **kwargs):
         super(Booking, self).__init__(**kwargs)
         if not self.confirmation_number:

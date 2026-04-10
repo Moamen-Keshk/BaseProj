@@ -10,6 +10,7 @@ import os
 from firebase_admin import initialize_app, get_app
 from firebase_admin import credentials
 import pymysql
+from flask_socketio import SocketIO
 
 pymysql.install_as_MySQLdb()
 
@@ -18,13 +19,28 @@ mail = Mail()
 moment = Moment()
 db = SQLAlchemy()
 pagedown = PageDown()
-cred = credentials.Certificate(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))
+socketio = SocketIO(
+    message_queue='redis://localhost:6379/0',
+    cors_allowed_origins="*",
+    async_mode='threading'  # 👉 Force standard threading
+)
 
 
 def create_app(config_name):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     config[config_name].init_app(app)
+
+    firebase_cert_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+
+    if firebase_cert_path and os.path.exists(firebase_cert_path):
+        try:
+            get_app()
+        except ValueError:
+            initialize_app(credentials.Certificate(firebase_cert_path))
+    else:
+        print(
+            "⚠️ WARNING: GOOGLE_APPLICATION_CREDENTIALS not found or invalid. Firebase Admin SDK will not be initialized.")
 
     # 1. Standard CORS
     CORS(app, resources={r"/*": {"origins": "*"}})
@@ -34,11 +50,7 @@ def create_app(config_name):
     moment.init_app(app)
     db.init_app(app)
     pagedown.init_app(app)
-
-    try:
-        get_app()
-    except ValueError:
-        initialize_app(cred)
+    socketio.init_app(app)
 
     if app.config['SSL_REDIRECT']:
         from flask_sslify import SSLify

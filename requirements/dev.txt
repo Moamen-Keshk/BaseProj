@@ -12,3 +12,6 @@ celery[redis]
 twilio
 stripe
 flask_jwt_extended
+Flask-SocketIO
+simple-websocket
+gunicorn

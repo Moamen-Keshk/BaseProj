@@ -2,13 +2,16 @@ import os
 import sys
 import click
 from dotenv import load_dotenv
-from flask_migrate import Migrate, upgrade
 
-from app import create_app, db
-
+# 1. Load environment variables ONCE, before anything else
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
+else:
+    load_dotenv()
+
+from flask_migrate import Migrate, upgrade
+from app import create_app, db, socketio
 
 COV = None
 if os.environ.get('FLASK_COVERAGE'):
@@ -22,15 +25,17 @@ migrate = Migrate(app, db)
 from app.api.models import (
     User,
     Role,
-    PMSPermission,  # <-- Replaced Permission
-    UserPropertyAccess,  # <-- Added new mapping table
+    PMSPermission,
+    UserPropertyAccess,
     Notification,
     OrderStatus,
     PropertyStatus,
     RoomStatus,
     PaymentStatus,
     Category,
-    BookingStatus, Amenity, RoomCleaningStatus
+    BookingStatus,
+    Amenity,
+    RoomCleaningStatus
 )
 
 from app.api.channel_manager.models import SupportedChannel
@@ -42,8 +47,8 @@ def make_shell_context():
         db=db,
         User=User,
         Role=Role,
-        PMSPermission=PMSPermission,               # <-- Updated
-        UserPropertyAccess=UserPropertyAccess,     # <-- Added
+        PMSPermission=PMSPermission,
+        UserPropertyAccess=UserPropertyAccess,
         Notification=Notification,
         OrderStatus=OrderStatus,
         PropertyStatus=PropertyStatus,
@@ -104,7 +109,7 @@ def profile(length, profile_dir):
         restrictions=[length],
         profile_dir=profile_dir,
     )
-    app.run()
+    # Notice we removed the app.run() from inside this function!
 
 
 @app.cli.command()
@@ -124,3 +129,9 @@ def deploy():
     RoomCleaningStatus.insert_status()
 
     print('Deployment tasks completed successfully.')
+
+
+# ✅ CORRECT: Placed at the very end of the file, at the root indentation level.
+if __name__ == '__main__':
+    print("🚀 Booting up the Lotel PMS Real-Time Server...")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
