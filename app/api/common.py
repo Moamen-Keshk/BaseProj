@@ -60,7 +60,7 @@ def notifications_count():
     try:
         uid = get_current_user()
         if uid:
-            count = Notification.query.filter_by(to_user_uid=uid, is_read=False).count()
+            count = Notification.query.filter_by(to_user=uid, is_read=False).count()
             return make_response(jsonify({'status': 'success', 'data': count})), 200
 
         return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized'})), 401
@@ -78,13 +78,7 @@ def notifications():
     try:
         uid = get_current_user()
         if uid:
-            # ⬇️ THE FIX: Fetch the actual User object first ⬇️
-            user = User.query.get(uid)
-            if not user:
-                return make_response(jsonify({'status': 'fail', 'message': 'User not found'})), 404
-
-            # ⬇️ Pass the 'user' object instead of the string 'uid' ⬇️
-            notifications_list = Notification.query.filter_by(to_user_uid=user, is_read=False) \
+            notifications_list = Notification.query.filter_by(to_user=uid, is_read=False) \
                 .order_by(Notification.timestamp.desc()).limit(6).all()
 
             data = [n.to_json() for n in notifications_list]
@@ -105,13 +99,7 @@ def all_notifications():
     try:
         uid = get_current_user()
         if uid:
-            # ⬇️ THE FIX: Fetch the actual User object first ⬇️
-            user = User.query.get(uid)
-            if not user:
-                return make_response(jsonify({'status': 'fail', 'message': 'User not found'})), 404
-
-            # ⬇️ Pass the 'user' object instead of the string 'uid' ⬇️
-            notifications_list = Notification.query.filter_by(to_user_uid=user) \
+            notifications_list = Notification.query.filter_by(to_user=uid) \
                 .order_by(Notification.timestamp.desc()).all()
 
             data = [n.to_json() for n in notifications_list]
@@ -121,6 +109,51 @@ def all_notifications():
     except Exception as e:
         logging.exception("Error in all_notifications: %s", str(e))
         return make_response(jsonify({'status': 'error', 'message': 'Failed to fetch all notifications.'})), 500
+
+
+@api.route('/notifications/<int:notification_id>/read', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+def mark_notification_read(notification_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        uid = get_current_user()
+        if not uid:
+            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized'})), 401
+
+        notification = Notification.query.filter_by(id=notification_id, to_user=uid).first()
+        if not notification:
+            return make_response(jsonify({'status': 'fail', 'message': 'Notification not found.'})), 404
+
+        notification.is_read = True
+        db.session.commit()
+        return make_response(jsonify({'status': 'success', 'message': 'Notification marked as read.'})), 200
+    except Exception as e:
+        logging.exception("Error in mark_notification_read: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to update notification.'})), 500
+
+
+@api.route('/notifications/read-all', methods=['PUT', 'OPTIONS'], strict_slashes=False)
+def mark_all_notifications_read():
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        uid = get_current_user()
+        if not uid:
+            return make_response(jsonify({'status': 'fail', 'message': 'Unauthorized'})), 401
+
+        Notification.query.filter_by(to_user=uid, is_read=False).update(
+            {'is_read': True},
+            synchronize_session=False,
+        )
+        db.session.commit()
+        return make_response(jsonify({'status': 'success', 'message': 'Notifications marked as read.'})), 200
+    except Exception as e:
+        logging.exception("Error in mark_all_notifications_read: %s", str(e))
+        db.session.rollback()
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to update notifications.'})), 500
 
 
 @api.route('/edit-profile', methods=['POST', 'OPTIONS'], strict_slashes=False)

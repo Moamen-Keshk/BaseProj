@@ -16,6 +16,7 @@ from app.api.payments.services import (
     sync_invoice_for_booking,
 )
 from app.api.payments.utils import decrypt_data
+from app.api.utils.notifications import notify_payment_failed, sync_arrival_issue_notification
 from app.auth.utils import get_current_user
 
 
@@ -131,6 +132,11 @@ def sync_booking_invoice_route(property_id, booking_id):
             tax_amount=payload.get('tax_amount'),
             notes=payload.get('notes'),
         )
+        db.session.commit()
+
+        if transaction.status == 'failed' or transaction.processor_status == 'failed':
+            notify_payment_failed(booking, transaction)
+        sync_arrival_issue_notification(booking)
         db.session.commit()
 
         return make_response(jsonify({

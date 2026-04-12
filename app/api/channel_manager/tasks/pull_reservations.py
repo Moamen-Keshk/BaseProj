@@ -5,6 +5,7 @@ from app import db
 from app.api.channel_manager.models import ChannelConnection, ChannelMessageLog, ChannelSyncJob
 from app.api.channel_manager.adapters import get_adapter
 from app.api.channel_manager.services.reconciliation_service import ReconciliationService
+from app.api.utils.notifications import notify_channel_sync_issue
 
 
 @celery.task
@@ -22,6 +23,7 @@ def process_reservation_pull_job(job_id: int):
     if not connection:
         job.status = 'failed'
         job.last_error = 'No active channel connection'
+        notify_channel_sync_issue(job, job.last_error)
         db.session.commit()
         return
 
@@ -109,6 +111,8 @@ def process_reservation_pull_job(job_id: int):
             job.status = 'failed'
 
         job.last_error = str(exc)
+        if job.status == 'failed':
+            notify_channel_sync_issue(job, job.last_error)
 
         db.session.commit()
 

@@ -12,6 +12,7 @@ from app.api.payments.services import (
     mark_transaction_failed,
     mark_transaction_succeeded,
 )
+from app.api.utils.notifications import notify_payment_failed, sync_arrival_issue_notification
 from . import payments_bp
 from .utils import decrypt_data
 
@@ -72,6 +73,7 @@ def stripe_webhook():
             txn.processor_reference = payment_intent.get('latest_charge')
             txn.processor_status = payment_intent.get('status')
             mark_transaction_succeeded(txn)
+            sync_arrival_issue_notification(txn.booking)
             db.session.commit()
 
     elif event['type'] == 'payment_intent.amount_capturable_updated':
@@ -81,6 +83,7 @@ def stripe_webhook():
             txn.processor_reference = payment_intent.get('latest_charge')
             txn.processor_status = payment_intent.get('status')
             mark_transaction_authorized(txn)
+            sync_arrival_issue_notification(txn.booking)
             db.session.commit()
 
     elif event['type'] == 'payment_intent.payment_failed':
@@ -90,6 +93,8 @@ def stripe_webhook():
             txn.processor_reference = payment_intent.get('latest_charge')
             txn.processor_status = payment_intent.get('status')
             mark_transaction_failed(txn)
+            notify_payment_failed(txn.booking, txn)
+            sync_arrival_issue_notification(txn.booking)
             db.session.commit()
 
     return jsonify(success=True), 200

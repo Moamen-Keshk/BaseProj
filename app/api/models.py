@@ -294,7 +294,11 @@ class Notification(db.Model):
     is_read = db.Column(db.Boolean, default=False)
     has_action = db.Column(db.Boolean, default=False)
     to_user = db.Column(db.String(32), db.ForeignKey('users.uid'))
-    routing = db.Column(db.String(32))
+    routing = db.Column(db.String(64))
+    notification_type = db.Column(db.String(64), index=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=True, index=True)
+    entity_type = db.Column(db.String(32), nullable=True)
+    entity_id = db.Column(db.String(64), nullable=True)
 
     def to_json(self):
         json_notification = {
@@ -304,8 +308,12 @@ class Notification(db.Model):
             'is_read': self.is_read,
             'has_action': self.has_action,
             'to_user': self.to_user,
-            'fire_date': self.timestamp,
-            'routing': self.routing
+            'fire_date': self.timestamp.isoformat() if self.timestamp else None,
+            'routing': self.routing,
+            'notification_type': self.notification_type,
+            'property_id': self.property_id,
+            'entity_type': self.entity_type,
+            'entity_id': self.entity_id,
         }
         return json_notification
 
@@ -1299,6 +1307,10 @@ class PropertyInvite(db.Model):
 class GuestMessage(db.Model):
     __tablename__ = 'guest_messages'
 
+    VALID_DIRECTIONS = ('outbound', 'inbound')
+    VALID_CHANNELS = ('whatsapp', 'sms', 'email')
+    VALID_DELIVERY_STATUSES = ('queued', 'sent', 'received', 'failed')
+
     id = db.Column(db.Integer, primary_key=True)
     booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
@@ -1309,9 +1321,14 @@ class GuestMessage(db.Model):
     # 'WhatsApp' or 'sms'
     channel = db.Column(db.String(16), nullable=False, default='whatsapp')
 
+    subject = db.Column(db.String(255), nullable=True)
     message_body = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.now(timezone.utc))
     is_read = db.Column(db.Boolean, default=False)  # To show unread badges to staff
+    delivery_status = db.Column(db.String(32), nullable=False, default='sent')
+    delivery_error = db.Column(db.Text, nullable=True)
+    external_message_id = db.Column(db.String(128), nullable=True)
+    sent_by_user_id = db.Column(db.String(32), db.ForeignKey('users.uid'), nullable=True, index=True)
 
     # Establish relationship to Booking
     booking = db.relationship('Booking',
@@ -1324,9 +1341,14 @@ class GuestMessage(db.Model):
             'property_id': self.property_id,
             'direction': self.direction,
             'channel': self.channel,
+            'subject': self.subject,
             'message_body': self.message_body,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'is_read': self.is_read
+            'is_read': self.is_read,
+            'delivery_status': self.delivery_status,
+            'delivery_error': self.delivery_error,
+            'external_message_id': self.external_message_id,
+            'sent_by_user_id': self.sent_by_user_id,
         }
 
 class Amenity(db.Model):

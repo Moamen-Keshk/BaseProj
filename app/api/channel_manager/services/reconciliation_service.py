@@ -15,6 +15,7 @@ from app.api.channel_manager.services.pms_sync import queue_booking_ari_sync
 from app.api.channel_manager.services.reservation_import_service import ReservationImportService
 from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
 from app.api.models import Booking, BookingStatus
+from app.api.utils.notifications import notify_booking_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +261,14 @@ class ReconciliationService:
                     if booking and booking.status_id != cancelled_status_id:
                         booking.status_id = cancelled_status_id
                         db.session.flush()
+                        notify_booking_cancelled(
+                            property_id=booking.property_id,
+                            booking_id=booking.id,
+                            guest_name=' '.join(
+                                part for part in [booking.first_name, booking.last_name] if part
+                            ).strip() or 'Guest',
+                            booking_reference=f"#{booking.confirmation_number}" if booking.confirmation_number else None,
+                        )
                         queue_booking_ari_sync(
                             booking,
                             reason=f"Channel reconciliation cancellation: {connection.channel_code}",

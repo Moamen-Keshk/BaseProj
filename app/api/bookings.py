@@ -1,8 +1,9 @@
 import logging
+import os
 from datetime import timedelta, datetime
 from types import SimpleNamespace
 from flask import request, make_response, jsonify
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, cast, String, func
 
 from . import api
 from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage, Room
@@ -19,6 +20,77 @@ from app.api.channel_manager.services.pms_sync import (
     queue_booking_ari_sync,
     queue_booking_transition_ari_sync,
 )
+from app.api.payments.models import Invoice
+from app.api.utils.notifications import (
+    clear_notifications,
+    notify_booking_cancelled,
+    notify_booking_changed,
+    notify_guest_message_received,
+    notify_new_booking,
+    notify_overbooking_issue,
+    sync_arrival_issue_notification,
+    NotificationType,
+)
+
+
+def _normalize_phone_number(phone_number):
+    if not phone_number:
+        return ''
+
+    stripped = ''.join(ch for ch in str(phone_number) if ch.isdigit() or ch == '+')
+    if stripped.startswith('00'):
+        return f"+{stripped[2:]}"
+    if stripped.startswith('+'):
+        return stripped
+    return stripped
+
+
+def _normalize_guest_name(first_name, last_name):
+    return ' '.join(part for part in [(first_name or '').strip(), (last_name or '').strip()] if part) or 'Guest'
+
+
+def _select_booking_for_inbound_message(normalized_phone):
+    if not normalized_phone:
+        return None
+
+    lookup_fragment = normalized_phone[-7:] if len(normalized_phone) >= 7 else normalized_phone
+    candidate_query = Booking.query.filter(Booking.phone.isnot(None))
+    if lookup_fragment:
+        candidate_query = candidate_query.filter(Booking.phone.like(f"%{lookup_fragment}%"))
+
+    candidates = candidate_query.order_by(Booking.check_out.desc(), Booking.id.desc()).limit(50).all()
+    exact_matches = [booking for booking in candidates if _normalize_phone_number(booking.phone) == normalized_phone]
+    if not exact_matches:
+        return None
+
+    today = datetime.utcnow().date()
+    active_matches = [
+        booking for booking in exact_matches
+        if booking.check_in and booking.check_out
+        and booking.check_in - timedelta(days=1) <= today <= booking.check_out + timedelta(days=1)
+    ]
+    if active_matches:
+        return active_matches[0]
+
+    recent_matches = [
+        booking for booking in exact_matches
+        if booking.check_out and booking.check_out >= today - timedelta(days=30)
+    ]
+    if recent_matches:
+        return recent_matches[0]
+
+    return exact_matches[0]
+
+
+def _queue_guest_message_delivery(task_callable, *, guest_message, **task_kwargs):
+    try:
+        task_callable.delay(message_id=guest_message.id, **task_kwargs)
+    except Exception as exc:
+        logging.exception("Failed to queue guest communication: %s", str(exc))
+        guest_message.delivery_status = 'failed'
+        guest_message.delivery_error = 'Failed to queue delivery task.'
+        db.session.commit()
+        raise
 
 
 @api.route('/properties/<int:property_id>/bookings', methods=['POST', 'OPTIONS'], strict_slashes=False)
@@ -56,6 +128,13 @@ def new_booking(property_id):
         )
 
         if not is_available:
+            notify_overbooking_issue(
+                property_id=property_id,
+                room_id=booking.room_id,
+                check_in=booking.check_in,
+                check_out=booking.check_out,
+            )
+            db.session.commit()
             return make_response(jsonify({
                 "status": "error",
                 "message": "The selected room is already booked for these dates. Please choose different dates or another room."
@@ -97,6 +176,10 @@ def new_booking(property_id):
 
         db.session.commit()
 
+        notify_new_booking(booking, actor_uid=user_id)
+        sync_arrival_issue_notification(booking)
+        db.session.commit()
+
         if booking.email:
             from app.api.utils.guest_communication_task import send_booking_email_task
             send_booking_email_task.delay(booking_id=booking.id, property_id=property_id)
@@ -125,9 +208,9 @@ def send_guest_message(property_id, booking_id):
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
-        data = request.get_json()
-        subject = data.get('subject')
-        message_body = data.get('message')
+        data = request.get_json() or {}
+        subject = (data.get('subject') or '').strip()
+        message_body = (data.get('message') or '').strip()
 
         if not subject or not message_body:
             return make_response(jsonify({'status': 'fail', 'message': 'Subject and message are required.'})), 400
@@ -137,21 +220,41 @@ def send_guest_message(property_id, booking_id):
         if not booking or not booking.email:
             return make_response(jsonify({'status': 'fail', 'message': 'Booking or guest email not found.'})), 404
 
-        # Send the custom email
+        email_log = GuestMessage(
+            booking_id=booking.id,
+            property_id=property_id,
+            direction='outbound',
+            channel='email',
+            subject=subject,
+            message_body=message_body,
+            is_read=True,
+            delivery_status='queued',
+            sent_by_user_id=get_current_user(),
+        )
+        db.session.add(email_log)
+        db.session.commit()
+
         from app.api.utils.guest_communication_task import send_guest_message
-        send_guest_message.delay(
+        _queue_guest_message_delivery(
+            send_guest_message,
+            guest_message=email_log,
             email=booking.email,
             subject=f"{subject} DO NOT REPLY",
             message_body=message_body,
             property_id=property_id,
             first_name=booking.first_name,
-            last_name=booking.last_name
+            last_name=booking.last_name,
         )
 
-        return make_response(jsonify({'status': 'success', 'message': 'Message sent to guest.'})), 200
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Message queued for delivery.',
+            'data': email_log.to_json(),
+        })), 200
 
     except Exception as e:
         logging.exception("Error in send_guest_message: %s", str(e))
+        db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': 'Failed to send message.'})), 500
 
 
@@ -164,6 +267,7 @@ def edit_booking(property_id, booking_id):
 
     try:
         booking_data = request.get_json()
+        current_uid = get_current_user()
 
         booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
         if not booking:
@@ -176,6 +280,7 @@ def edit_booking(property_id, booking_id):
         old_room_id = booking.room_id
         old_check_in = booking.check_in
         old_check_out = booking.check_out
+        old_status_id = booking.status_id
 
         # ==========================================
         # NEW: VERIFY AVAILABILITY BEFORE UPDATING
@@ -204,6 +309,13 @@ def edit_booking(property_id, booking_id):
         )
 
         if not is_available:
+            notify_overbooking_issue(
+                property_id=property_id,
+                room_id=new_room_id,
+                check_in=new_check_in,
+                check_out=new_check_out,
+            )
+            db.session.commit()
             return make_response(jsonify({
                 "status": "error",
                 "message": "The selected room is already booked for these dates. Please choose different dates or another room."
@@ -240,6 +352,20 @@ def edit_booking(property_id, booking_id):
 
         db.session.commit()
 
+        cancelled_status_id = Constants.BookingStatusCoding['Cancelled']
+        if old_status_id != booking.status_id and booking.status_id == cancelled_status_id:
+            notify_booking_cancelled(
+                property_id=booking.property_id,
+                booking_id=booking.id,
+                guest_name=_normalize_guest_name(booking.first_name, booking.last_name),
+                booking_reference=f"#{booking.confirmation_number}" if booking.confirmation_number else None,
+                actor_uid=current_uid,
+            )
+        else:
+            notify_booking_changed(booking, actor_uid=current_uid)
+        sync_arrival_issue_notification(booking)
+        db.session.commit()
+
         queue_booking_transition_ari_sync(
             old_property_id=old_property_id,
             old_room_id=old_room_id,
@@ -273,22 +399,80 @@ def all_bookings(property_id):
     try:
         check_in_year = request.args.get('check_in_year', type=int)
         check_in_month = request.args.get('check_in_month', type=int)
+        search_query = (request.args.get('q') or '').strip()
+        check_in_from_raw = request.args.get('check_in_from')
+        check_out_to_raw = request.args.get('check_out_to')
 
-        bookings = db.session.query(Booking).filter(
-            and_(
-                Booking.property_id == property_id,
-                or_(Booking.check_in_year == check_in_year,
-                    Booking.check_out_year == check_in_year),
-                or_(
-                    and_(Booking.check_in_month == check_in_month,
-                         Booking.check_out_month == check_in_month),
-                    and_(Booking.check_in_month != check_in_month,
-                         Booking.check_out_month == check_in_month),
-                    and_(Booking.check_in_month == check_in_month,
-                         Booking.check_out_month != check_in_month)
+        def _parse_date_arg(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except ValueError:
+                return None
+
+        check_in_from = _parse_date_arg(check_in_from_raw)
+        check_out_to = _parse_date_arg(check_out_to_raw)
+
+        bookings_query = db.session.query(Booking).outerjoin(
+            Room, Booking.room_id == Room.id
+        ).outerjoin(
+            Invoice, Invoice.booking_id == Booking.id
+        ).filter(
+            Booking.property_id == property_id
+        )
+
+        if check_in_year is not None and check_in_month is not None:
+            bookings_query = bookings_query.filter(
+                and_(
+                    or_(Booking.check_in_year == check_in_year,
+                        Booking.check_out_year == check_in_year),
+                    or_(
+                        and_(Booking.check_in_month == check_in_month,
+                             Booking.check_out_month == check_in_month),
+                        and_(Booking.check_in_month != check_in_month,
+                             Booking.check_out_month == check_in_month),
+                        and_(Booking.check_in_month == check_in_month,
+                             Booking.check_out_month != check_in_month)
+                    )
                 )
             )
-        ).order_by(Booking.check_in_year, Booking.check_in_month, Booking.check_in_day).all()
+
+        if check_in_from is not None:
+            bookings_query = bookings_query.filter(Booking.check_in >= check_in_from)
+
+        if check_out_to is not None:
+            bookings_query = bookings_query.filter(Booking.check_out <= check_out_to)
+
+        if search_query:
+            search_like = f"%{search_query.lower()}%"
+            raw_like = f"%{search_query}%"
+            full_name = func.trim(
+                func.coalesce(Booking.first_name, '') + ' ' + func.coalesce(Booking.last_name, '')
+            )
+
+            bookings_query = bookings_query.filter(
+                or_(
+                    func.lower(func.coalesce(Booking.first_name, '')).like(search_like),
+                    func.lower(func.coalesce(Booking.last_name, '')).like(search_like),
+                    func.lower(full_name).like(search_like),
+                    func.lower(func.coalesce(Booking.email, '')).like(search_like),
+                    func.lower(func.coalesce(Booking.phone, '')).like(search_like),
+                    func.lower(func.coalesce(Booking.note, '')).like(search_like),
+                    func.lower(func.coalesce(Booking.special_request, '')).like(search_like),
+                    cast(Booking.id, String).like(raw_like),
+                    cast(Booking.confirmation_number, String).like(raw_like),
+                    cast(Room.room_number, String).like(raw_like),
+                    func.lower(func.coalesce(Invoice.invoice_number, '')).like(search_like),
+                )
+            )
+
+        bookings = bookings_query.order_by(
+            Booking.check_in_year,
+            Booking.check_in_month,
+            Booking.check_in_day,
+            Booking.id.desc(),
+        ).all()
 
         response_data = [booking.to_json() for booking in bookings]
 
@@ -313,6 +497,7 @@ def delete_booking(property_id, booking_id):
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
+        current_uid = get_current_user()
         booking = db.session.query(Booking).filter_by(id=booking_id, property_id=property_id).first()
 
         if not booking:
@@ -325,6 +510,8 @@ def delete_booking(property_id, booking_id):
         old_room_id = booking.room_id
         old_check_in = booking.check_in
         old_check_out = booking.check_out
+        guest_name = _normalize_guest_name(booking.first_name, booking.last_name)
+        booking_reference = f"#{booking.confirmation_number}" if booking.confirmation_number else None
 
         # --- ADDED THIS LINE TO PREVENT FOREIGN KEY ERROR ---
         ChannelReservationLink.query.filter_by(internal_booking_id=booking_id).delete(synchronize_session=False)
@@ -340,6 +527,21 @@ def delete_booking(property_id, booking_id):
         )
 
         queue_booking_ari_sync(deleted_snapshot, 'booking_deleted')
+
+        notify_booking_cancelled(
+            property_id=old_property_id,
+            booking_id=booking_id,
+            guest_name=guest_name,
+            booking_reference=booking_reference,
+            actor_uid=current_uid,
+        )
+        clear_notifications(
+            notification_type=NotificationType.ARRIVAL_ISSUE,
+            property_id=old_property_id,
+            entity_type='booking',
+            entity_id=booking_id,
+        )
+        db.session.commit()
 
         return make_response(jsonify({
             'status': 'success',
@@ -379,6 +581,14 @@ def check_in_booking(property_id, booking_id):
             })), 500
 
         booking.change_status(checked_in_status.id)
+        db.session.commit()
+
+        clear_notifications(
+            notification_type=NotificationType.ARRIVAL_ISSUE,
+            property_id=booking.property_id,
+            entity_type='booking',
+            entity_id=booking.id,
+        )
         db.session.commit()
 
         return make_response(jsonify({
@@ -430,6 +640,14 @@ def check_out_booking(property_id, booking_id):
                 allow_system=True,
             )
 
+        db.session.commit()
+
+        clear_notifications(
+            notification_type=NotificationType.ARRIVAL_ISSUE,
+            property_id=booking.property_id,
+            entity_type='booking',
+            entity_id=booking.id,
+        )
         db.session.commit()
 
         try:
@@ -800,6 +1018,10 @@ def get_chat_history(property_id, booking_id):
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
+    booking = Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+    if not booking:
+        return jsonify({'status': 'fail', 'message': 'Booking not found.'}), 404
+
     messages = GuestMessage.query.filter_by(booking_id=booking_id, property_id=property_id).order_by(
         GuestMessage.timestamp.asc()).all()
 
@@ -819,54 +1041,93 @@ def send_chat_message(property_id, booking_id):
     if request.method == 'OPTIONS':
         return make_response(jsonify({"status": "ok"})), 200
 
-    data = request.get_json()
-    message_body = data.get('message')
-    channel = data.get('channel', 'whatsapp')
+    data = request.get_json() or {}
+    message_body = (data.get('message') or '').strip()
+    channel = (data.get('channel') or 'whatsapp').strip().lower()
 
-    # 1. Save to database INSTANTLY
+    if not message_body:
+        return jsonify({'status': 'fail', 'message': 'Message is required.'}), 400
+
+    if channel not in {'whatsapp', 'sms'}:
+        return jsonify({'status': 'fail', 'message': 'Unsupported chat channel.'}), 400
+
+    booking = Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+    if not booking:
+        return jsonify({'status': 'fail', 'message': 'Booking not found.'}), 404
+
+    if not (booking.phone and _normalize_phone_number(booking.phone)):
+        return jsonify({'status': 'fail', 'message': 'Guest phone number is not available.'}), 400
+
     chat_log = GuestMessage(
-        booking_id=booking_id,
+        booking_id=booking.id,
         property_id=property_id,
         direction='outbound',
         channel=channel,
         message_body=message_body,
-        is_read=True
+        is_read=True,
+        delivery_status='queued',
+        sent_by_user_id=get_current_user(),
     )
     db.session.add(chat_log)
     db.session.commit()
 
-    # 2. Queue Twilio delivery in the background
     from app.api.utils.guest_communication_task import send_sms_whatsapp_task
-    send_sms_whatsapp_task.delay(booking_id, property_id, message_body, channel)
+    _queue_guest_message_delivery(
+        send_sms_whatsapp_task,
+        guest_message=chat_log,
+        booking_id=booking.id,
+        message_body=message_body,
+        channel=channel,
+    )
 
-    return jsonify({'status': 'success', 'message': 'Message queued.'}), 200
+    return jsonify({
+        'status': 'success',
+        'message': 'Message queued.',
+        'data': chat_log.to_json(),
+    }), 200
 
 
 @api.route('/webhooks/twilio/receive', methods=['POST'])
 def twilio_webhook():
+    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+    twilio_signature = request.headers.get('X-Twilio-Signature')
+    if auth_token and twilio_signature:
+        from twilio.request_validator import RequestValidator
+
+        validator = RequestValidator(auth_token)
+        if not validator.validate(request.url, request.form, twilio_signature):
+            logging.warning("Rejected Twilio webhook with invalid signature.")
+            return jsonify({'status': 'fail', 'message': 'Invalid signature.'}), 403
+
     # Twilio sends data as form-urlencoded
     from_number = request.form.get('From', '')
-    body = request.form.get('Body', '')
+    body = (request.form.get('Body') or '').strip()
+
+    if not from_number or not body:
+        return jsonify({'status': 'fail', 'message': 'Missing sender or body.'}), 400
 
     # Clean 'WhatsApp:' prefix if present
     clean_number = from_number.replace('whatsapp:', '')
     channel = 'whatsapp' if 'whatsapp:' in from_number else 'sms'
+    normalized_phone = _normalize_phone_number(clean_number)
 
-    # Find the most recent active booking for this phone number
-    booking = Booking.query.filter(Booking.phone.like(f"%{clean_number}%")).order_by(Booking.id.desc()).first()
+    booking = _select_booking_for_inbound_message(normalized_phone)
 
     if booking:
-        # Log the inbound message
         inbound_msg = GuestMessage(
             booking_id=booking.id,
             property_id=booking.property_id,
             direction='inbound',
             channel=channel,
             message_body=body,
-            is_read=False
+            is_read=False,
+            delivery_status='received',
         )
         db.session.add(inbound_msg)
+        notify_guest_message_received(inbound_msg)
         db.session.commit()
+    else:
+        logging.warning("No booking matched inbound %s message from %s", channel, normalized_phone)
 
     # Twilio requires an empty TwiML response to acknowledge receipt
     from twilio.twiml.messaging_response import MessagingResponse

@@ -9,6 +9,12 @@ from app.api.utils.pricing_engine import get_room_sellable_type_id
 from app.api.payments.models import BookingVCC
 from app.api.payments.services import sync_invoice_for_booking
 from app.api.payments.utils import encrypt_data
+from app.api.utils.notifications import (
+    notify_booking_cancelled,
+    notify_booking_changed,
+    notify_new_booking,
+    sync_arrival_issue_notification,
+)
 
 
 class ReservationImportService:
@@ -136,6 +142,21 @@ class ReservationImportService:
                 sync_invoice_for_booking(booking)
                 db.session.commit()
 
+                if reservation_status == 'cancelled':
+                    notify_booking_cancelled(
+                        property_id=booking.property_id,
+                        booking_id=booking.id,
+                        guest_name=' '.join(part for part in [booking.first_name, booking.last_name] if part).strip() or 'Guest',
+                        booking_reference=f"#{booking.confirmation_number}" if booking.confirmation_number else None,
+                    )
+                else:
+                    notify_booking_changed(
+                        booking,
+                        change_label=f'updated from {connection.channel_code}',
+                    )
+                    sync_arrival_issue_notification(booking)
+                db.session.commit()
+
                 from app.api.channel_manager.services.pms_sync import queue_booking_ari_sync
                 queue_booking_ari_sync(booking, reason=f"OTA Modification: {connection.channel_code}")
 
@@ -215,6 +236,10 @@ class ReservationImportService:
             status='imported',
         )
         db.session.add(link)
+        db.session.commit()
+
+        notify_new_booking(booking, source_label=connection.channel_code)
+        sync_arrival_issue_notification(booking)
         db.session.commit()
 
         print(f"🔔 EMITTING TO REDIS FOR PROPERTY: {booking.property_id}")
