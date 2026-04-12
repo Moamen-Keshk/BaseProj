@@ -411,6 +411,11 @@ class Property(db.Model):
     email = db.Column(db.String(120))
     status_id = db.Column(db.Integer, db.ForeignKey('property_status.id'), default=1)
     published_date = db.Column(db.Date(), default=datetime.today().date())
+    timezone = db.Column(db.String(64), default='UTC')
+    currency = db.Column(db.String(3), default='USD')
+    tax_rate = db.Column(db.Float, default=0.0)
+    default_check_in_time = db.Column(db.String(5), default='15:00')
+    default_check_out_time = db.Column(db.String(5), default='11:00')
 
     # 👉 1. Many-to-Many: Safe to leave as is. SQLAlchemy automatically cleans up the association table.
     amenities = db.relationship('Amenity', secondary=property_amenities, lazy='subquery',
@@ -421,6 +426,7 @@ class Property(db.Model):
     # you can use `overlaps="property"` to prevent SQLAlchemy warnings.
     floors = db.relationship('Floor', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     rooms = db.relationship('Room', backref='property_ref', lazy=True, cascade="all, delete-orphan")
+    room_types = db.relationship('RoomType', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     bookings = db.relationship('Booking', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     rate_plans = db.relationship('RatePlan', backref='property_ref', lazy=True, cascade="all, delete-orphan")
     seasons = db.relationship('Season', backref='property_ref', lazy=True, cascade="all, delete-orphan")
@@ -443,8 +449,14 @@ class Property(db.Model):
             'address': self.address,
             'phone_number': self.phone_number,
             'email': self.email,
+            'status_id': self.status_id,
             'status': Constants.PropertyStatusCoding[self.status_id],
-            'published_date': self.published_date.strftime("%d-%m-%y"),
+            'published_date': self.published_date.strftime("%Y-%m-%d"),
+            'timezone': self.timezone or 'UTC',
+            'currency': self.currency or 'USD',
+            'tax_rate': float(self.tax_rate or 0.0),
+            'default_check_in_time': self.default_check_in_time or '15:00',
+            'default_check_out_time': self.default_check_out_time or '11:00',
             'amenities': [a.to_json() for a in self.amenities]
         }
         return json_property
@@ -455,12 +467,22 @@ class Property(db.Model):
         address = json_property.get('address')
         phone_number = json_property.get('phone_number')
         email = json_property.get('email')
+        timezone = json_property.get('timezone', 'UTC')
+        currency = json_property.get('currency', 'USD')
+        tax_rate = json_property.get('tax_rate', 0.0)
+        default_check_in_time = json_property.get('default_check_in_time', '15:00')
+        default_check_out_time = json_property.get('default_check_out_time', '11:00')
 
         return Property(
             name=name,
             address=address,
             phone_number=phone_number,
-            email=email
+            email=email,
+            timezone=timezone,
+            currency=currency,
+            tax_rate=tax_rate,
+            default_check_in_time=default_check_in_time,
+            default_check_out_time=default_check_out_time,
         )
 
 class PropertyStatus(db.Model):
@@ -485,6 +507,57 @@ class PropertyStatus(db.Model):
                 stat = PropertyStatus(name=s, code=status[s][0], color=status[s][1])
             db.session.add(stat)
         db.session.commit()
+
+
+class RoomType(db.Model):
+    __tablename__ = 'room_types'
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(255), default='')
+    max_guests = db.Column(db.Integer, nullable=False, default=1)
+    max_adults = db.Column(db.Integer, nullable=False, default=1)
+    max_children = db.Column(db.Integer, nullable=False, default=0)
+    max_infants = db.Column(db.Integer, nullable=False, default=0)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('property_id', 'name', name='uq_room_types_property_name'),
+    )
+
+    def __init__(self, **kwargs):
+        super(RoomType, self).__init__(**kwargs)
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'name': self.name,
+            'description': self.description or '',
+            'max_guests': self.max_guests,
+            'max_adults': self.max_adults,
+            'max_children': self.max_children,
+            'max_infants': self.max_infants,
+            'capacity': self.max_guests,
+            'is_active': self.is_active,
+        }
+
+    @staticmethod
+    def from_json(json_room_type):
+        max_guests = int(json_room_type.get('max_guests') or json_room_type.get('capacity') or 1)
+        max_adults = int(json_room_type.get('max_adults') or max_guests or 1)
+        max_children = int(json_room_type.get('max_children') or 0)
+        max_infants = int(json_room_type.get('max_infants') or 0)
+        return RoomType(
+            property_id=json_room_type.get('property_id'),
+            name=json_room_type.get('name'),
+            description=json_room_type.get('description') or '',
+            max_guests=max_guests,
+            max_adults=max_adults,
+            max_children=max_children,
+            max_infants=max_infants,
+            is_active=json_room_type.get('is_active', True),
+        )
 
 
 class Category(db.Model):
@@ -550,6 +623,7 @@ class Room(db.Model):
     room_number = db.Column(db.Integer)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'))
+    room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'))
     floor_id = db.Column(db.Integer, db.ForeignKey('floors.id'))
     status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), default=1)
     cleaning_status_id = db.Column(db.Integer, db.ForeignKey('room_cleaning_status.id'), default=3)
@@ -562,7 +636,8 @@ class Room(db.Model):
             'id': self.id,
             'room_number': self.room_number,
             'property_id': self.property_id,
-            'category_id': self.category_id,
+            'category_id': self.room_type_id or self.category_id,
+            'room_type_id': self.room_type_id or self.category_id,
             'floor_id': self.floor_id,
             'status_id': self.status_id,
             'cleaning_status_id': self.cleaning_status_id
@@ -574,11 +649,13 @@ class Room(db.Model):
         room_number = json_room.get('room_number')
         property_id = json_room.get('property_id')
         category_id = json_room.get('category_id')
+        room_type_id = json_room.get('room_type_id', category_id)
         floor_id = json_room.get('floor_id')
         status_id = json_room.get('status_id')
         cleaning_status_id = json_room.get('cleaning_status_id', 3)
         return Room(room_number=room_number, property_id=property_id, category_id=category_id,
-                    floor_id=floor_id, status_id=status_id, cleaning_status_id=cleaning_status_id)
+                    room_type_id=room_type_id, floor_id=floor_id, status_id=status_id,
+                    cleaning_status_id=cleaning_status_id)
 
 
 class RoomStatus(db.Model):
@@ -705,6 +782,7 @@ class Booking(db.Model):
     rate = db.Column(db.Float)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
+    requested_room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'))
     creator_id = db.Column(db.String(32))
 
     # 👉 NEW: Store the exact amount paid so far
@@ -738,7 +816,8 @@ class Booking(db.Model):
     # 👉 NEW: Dynamically calculate what is owed
     @property
     def balance_due(self):
-        # Prevent negative balances if they overpaid, or handle it as credit
+        if hasattr(self, 'invoice') and getattr(self, 'invoice', None) is not None:
+            return max(0.0, float(self.invoice.balance_due or 0.0))
         return max(0.0, float(self.rate or 0.0) - float(self.amount_paid or 0.0))
 
     # 👉 NEW: Auto-resolve the status based on balances
@@ -784,6 +863,7 @@ class Booking(db.Model):
             'balance_due': self.balance_due,                  # 👉 Added
             'property_id': self.property_id,
             'room_id': self.room_id,
+            'requested_room_type_id': self.requested_room_type_id,
             'creator_id': self.creator_id,
             'invoice_id': invoice.id if invoice else None,
             'invoice_number': invoice.invoice_number if invoice else None,
@@ -831,6 +911,7 @@ class Booking(db.Model):
             amount_paid=json_booking.get('amount_paid', 0.0), # 👉 Added
             property_id=json_booking.get('property_id'),
             room_id=json_booking.get('room_id'),
+            requested_room_type_id=json_booking.get('requested_room_type_id'),
             creator_id=json_booking.get('creator_id'),
         )
 
@@ -912,7 +993,8 @@ class RatePlan(db.Model):
     name = db.Column(db.String(120), nullable=False)
     base_rate = db.Column(db.Float, nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
-    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
+    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=True)
+    room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'), nullable=True)
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
     weekend_rate = db.Column(db.Float, nullable=True)
@@ -944,7 +1026,8 @@ class RatePlan(db.Model):
             'name': self.name,
             'base_rate': self.base_rate,
             'property_id': self.property_id,
-            'category_id': self.category_id,
+            'category_id': self.room_type_id or self.category_id,
+            'room_type_id': self.room_type_id or self.category_id,
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'end_date': self.end_date.isoformat() if self.end_date else None,
             'weekend_rate': self.weekend_rate,
@@ -974,6 +1057,7 @@ class RatePlan(db.Model):
         base_rate = json_data.get('base_rate')
         property_id = json_data.get('property_id')
         category_id = json_data.get('category_id')
+        room_type_id = json_data.get('room_type_id', category_id)
         start_date = datetime.fromisoformat(json_data.get('start_date')).date()
         end_date = datetime.fromisoformat(json_data.get('end_date')).date()
         weekend_rate = json_data.get('weekend_rate')
@@ -1000,6 +1084,7 @@ class RatePlan(db.Model):
             name=name,
             base_rate=base_rate,
             category_id=category_id,
+            room_type_id=room_type_id,
             property_id=property_id,
             start_date=start_date,
             end_date=end_date,
@@ -1067,7 +1152,8 @@ class RoomOnline(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
-    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
+    category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=True)
+    room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'), nullable=True)
     rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=True)
     date = db.Column(db.Date, nullable=False)
     price = db.Column(db.Float, nullable=False)
@@ -1081,7 +1167,8 @@ class RoomOnline(db.Model):
             'id': self.id,
             'room_id': self.room_id,
             'property_id': self.property_id,
-            'category_id': self.category_id,  # ✅ Include in output
+            'category_id': self.room_type_id or self.category_id,  # ✅ Include in output
+            'room_type_id': self.room_type_id or self.category_id,
             'rate_plan_id': self.rate_plan_id,
             'date': self.date.isoformat(),
             'price': self.price,
@@ -1094,6 +1181,7 @@ class RoomOnline(db.Model):
             room_id=json_data.get('room_id'),
             property_id=json_data.get('property_id'),
             category_id=json_data.get('category_id'),  # ✅ Parse input
+            room_type_id=json_data.get('room_type_id', json_data.get('category_id')),
             rate_plan_id=json_data.get('rate_plan_id'),
             date=datetime.fromisoformat(json_data.get('date')).date(),
             price=json_data.get('price')

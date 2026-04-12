@@ -13,6 +13,15 @@ from app.api.channel_manager.models import (
     ChannelMessageLog,
     SupportedChannel
 )
+from app.api.models import Room
+from app.api.utils.pricing_engine import get_room_sellable_type_id
+
+
+def _as_int(value):
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ==========================================
@@ -212,11 +221,36 @@ def create_channel_room_map(property_id):
 
     try:
         data = request.get_json() or {}
+        internal_room_type_id = _as_int(data.get('internal_room_type_id') or data.get('internal_room_id'))
+        representative_room = None
+        if internal_room_type_id:
+            representative_room = next(
+                (
+                    room for room in Room.query.filter_by(property_id=property_id)
+                    .order_by(Room.room_number).all()
+                    if get_room_sellable_type_id(room) == internal_room_type_id
+                ),
+                None,
+            )
+        internal_room_id = _as_int(data.get('internal_room_id')) or (representative_room.id if representative_room else None)
+        if representative_room is None and internal_room_id is not None:
+            representative_room = Room.query.filter_by(
+                id=internal_room_id,
+                property_id=property_id,
+            ).first()
+            if representative_room and not internal_room_type_id:
+                internal_room_type_id = representative_room.room_type_id or representative_room.category_id
+        if internal_room_id is None:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'A mapped room type must have at least one physical room.',
+            })), 400
 
         item = ChannelRoomMap(
             property_id=property_id,  # Forced from URL
             channel_code=data['channel_code'],
-            internal_room_id=data['internal_room_id'],
+            internal_room_id=internal_room_id,
+            internal_room_type_id=internal_room_type_id,
             external_room_id=data['external_room_id'],
             external_room_name=data.get('external_room_name'),
             is_active=data.get('is_active', True),
@@ -526,16 +560,36 @@ def bulk_map_rooms(property_id, connection_id):
         ).update({'is_active': False})
 
         for item in mappings:
-            internal_room_id = item.get('internal_room_id')
+            internal_room_type_id = _as_int(item.get('internal_room_type_id') or item.get('internal_room_id'))
             external_room_id = item.get('external_room_id')
 
-            if not internal_room_id or not external_room_id:
+            if not internal_room_type_id or not external_room_id:
+                continue
+
+            representative_room = Room.query.filter_by(
+                property_id=connection.property_id,
+            ).order_by(Room.room_number).all()
+            representative_room = next(
+                (
+                    room for room in representative_room
+                    if get_room_sellable_type_id(room) == internal_room_type_id
+                ),
+                None,
+            )
+            if representative_room is None and item.get('internal_room_id'):
+                representative_room = Room.query.filter_by(
+                    id=_as_int(item.get('internal_room_id')),
+                    property_id=connection.property_id,
+                ).first()
+                if representative_room:
+                    internal_room_type_id = representative_room.room_type_id or representative_room.category_id
+            if representative_room is None:
                 continue
 
             existing_map = ChannelRoomMap.query.filter_by(
                 property_id=connection.property_id,
                 channel_code=connection.channel_code,
-                internal_room_id=internal_room_id,
+                internal_room_type_id=internal_room_type_id,
                 external_room_id=external_room_id
             ).first()
 
@@ -545,7 +599,8 @@ def bulk_map_rooms(property_id, connection_id):
                 new_map = ChannelRoomMap(
                     property_id=connection.property_id,
                     channel_code=connection.channel_code,
-                    internal_room_id=internal_room_id,
+                    internal_room_id=representative_room.id if representative_room else None,
+                    internal_room_type_id=internal_room_type_id,
                     external_room_id=external_room_id,
                     is_active=True
                 )

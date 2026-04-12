@@ -10,7 +10,11 @@ from app.api.utils.room_online_generator import (
     generate_or_update_room_online_for_rate_plan,
     rebuild_room_online_for_category_range,
 )
-from app.api.utils.pricing_engine import build_rate_plan_validation_errors, calculate_quote
+from app.api.utils.pricing_engine import (
+    build_rate_plan_validation_errors,
+    calculate_quote,
+    get_rate_plan_room_type_id,
+)
 from app.api.channel_manager.services.pms_sync import (
     queue_rate_plan_ari_sync,
     queue_rate_plan_transition_ari_sync,
@@ -40,8 +44,8 @@ def _ensure_parent_rate_plan_is_valid(rate_plan):
     ).first()
     if parent_rate_plan is None:
         return 'Parent rate plan not found.'
-    if parent_rate_plan.category_id != rate_plan.category_id:
-        return 'Parent rate plan must belong to the same category.'
+    if get_rate_plan_room_type_id(parent_rate_plan) != get_rate_plan_room_type_id(rate_plan):
+        return 'Parent rate plan must belong to the same room type.'
     return None
 
 
@@ -59,8 +63,6 @@ def new_rate_plan(property_id):
 
         start_date = datetime.fromisoformat(rate_data['start_date']).date()
         end_date = datetime.fromisoformat(rate_data['end_date']).date()
-        category_id = rate_data.get('category_id')
-
         if start_date > end_date:
             return make_response(jsonify({
                 'status': 'fail',
@@ -123,6 +125,7 @@ def edit_rate_plan(property_id, rate_plan_id):
 
         old_property_id = rate_plan.property_id
         old_category_id = rate_plan.category_id
+        old_room_type_id = rate_plan.room_type_id
         old_start_date = rate_plan.start_date
         old_end_date = rate_plan.end_date
 
@@ -135,6 +138,7 @@ def edit_rate_plan(property_id, rate_plan_id):
         new_name = draft_rate_plan.name
         new_base_rate = draft_rate_plan.base_rate
         new_category_id = draft_rate_plan.category_id
+        new_room_type_id = draft_rate_plan.room_type_id
         new_start_date = draft_rate_plan.start_date
         new_end_date = draft_rate_plan.end_date
         new_weekend_rate = draft_rate_plan.weekend_rate
@@ -161,6 +165,7 @@ def edit_rate_plan(property_id, rate_plan_id):
         rate_plan.name = new_name
         rate_plan.base_rate = new_base_rate
         rate_plan.category_id = new_category_id
+        rate_plan.room_type_id = new_room_type_id
         rate_plan.start_date = new_start_date
         rate_plan.end_date = new_end_date
         rate_plan.weekend_rate = new_weekend_rate
@@ -189,6 +194,7 @@ def edit_rate_plan(property_id, rate_plan_id):
         queue_rate_plan_transition_ari_sync(
             old_property_id=old_property_id,
             old_category_id=old_category_id,
+            old_room_type_id=old_room_type_id,
             old_start_date=old_start_date,
             old_end_date=old_end_date,
             rate_plan=rate_plan,
@@ -210,6 +216,7 @@ def edit_rate_plan(property_id, rate_plan_id):
 
 
 @api.route('/properties/<int:property_id>/categories/<int:category_id>/rate_plans', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@api.route('/properties/<int:property_id>/room_types/<int:category_id>/rate_plans', methods=['GET', 'OPTIONS'], strict_slashes=False)
 @require_permission('view_rates')
 def get_rate_plans(property_id, category_id):
     # 1. INSTANT CORS PREFLIGHT APPROVAL
@@ -217,9 +224,11 @@ def get_rate_plans(property_id, category_id):
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
-        rate_plans = RatePlan.query.filter_by(
-            property_id=property_id,
-            category_id=category_id
+        rate_plans = RatePlan.query.filter_by(property_id=property_id).filter(
+            db.or_(
+                RatePlan.room_type_id == category_id,
+                RatePlan.category_id == category_id,
+            )
         ).order_by(RatePlan.start_date).all()
 
         data = [plan.to_json() for plan in rate_plans]
@@ -367,6 +376,7 @@ def delete_rate_plan(property_id, rate_plan_id):
 
         old_property_id = rate_plan.property_id
         old_category_id = rate_plan.category_id
+        old_room_type_id = rate_plan.room_type_id
         old_start_date = rate_plan.start_date
         old_end_date = rate_plan.end_date
 
@@ -375,7 +385,7 @@ def delete_rate_plan(property_id, rate_plan_id):
 
         rebuild_room_online_for_category_range(
             property_id=old_property_id,
-            category_id=old_category_id,
+            category_id=old_room_type_id or old_category_id,
             start_date=old_start_date,
             end_date=old_end_date,
         )
@@ -383,6 +393,7 @@ def delete_rate_plan(property_id, rate_plan_id):
         deleted_snapshot = SimpleNamespace(
             property_id=old_property_id,
             category_id=old_category_id,
+            room_type_id=old_room_type_id,
             start_date=old_start_date,
             end_date=old_end_date,
         )

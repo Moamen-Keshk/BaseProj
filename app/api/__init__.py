@@ -14,6 +14,7 @@ from . import (
     rooms,
     properties,
     categories,
+    room_types,
     payment_status,
     rate_plan,
     season,

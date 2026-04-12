@@ -1,8 +1,9 @@
 from datetime import datetime
 from app import db
 from app.api.channel_manager.models import ChannelReservationLink, ChannelRoomMap
-from app.api.models import Booking
+from app.api.models import Booking, Room
 from flask_socketio import SocketIO
+from app.api.utils.pricing_engine import get_room_sellable_type_id
 
 # 👉 IMPORT THE VCC MODEL AND ENCRYPTION UTILITY
 from app.api.payments.models import BookingVCC
@@ -12,7 +13,7 @@ from app.api.payments.utils import encrypt_data
 
 class ReservationImportService:
     @staticmethod
-    def _resolve_internal_room_id(connection, reservation_payload: dict):
+    def _resolve_internal_room(connection, reservation_payload: dict):
         room_stays = reservation_payload.get('room_stays', [])
         first_room = room_stays[0] if room_stays else {}
         external_room_id = first_room.get('external_room_id')
@@ -27,7 +28,21 @@ class ReservationImportService:
             is_active=True
         ).first()
 
-        return mapping.internal_room_id if mapping else None
+        if not mapping:
+            return None, None
+
+        if mapping.internal_room_type_id:
+            room = next(
+                (
+                    candidate for candidate in Room.query.filter_by(property_id=connection.property_id)
+                    .order_by(Room.room_number).all()
+                    if get_room_sellable_type_id(candidate) == mapping.internal_room_type_id
+                ),
+                None,
+            )
+            return (room.id if room else None), mapping.internal_room_type_id
+
+        return mapping.internal_room_id, None
 
     @staticmethod
     def import_one(connection, reservation_payload: dict):
@@ -52,7 +67,7 @@ class ReservationImportService:
             external_reservation_id=external_id,
         ).first()
 
-        internal_room_id = ReservationImportService._resolve_internal_room_id(connection, reservation_payload)
+        internal_room_id, internal_room_type_id = ReservationImportService._resolve_internal_room(connection, reservation_payload)
 
         # --- 2. UPDATE EXISTING BOOKING ---
         if link:
@@ -73,6 +88,8 @@ class ReservationImportService:
                     booking.rate = reservation_payload.get('total_price', booking.rate)
                     if internal_room_id:
                         booking.room_id = internal_room_id
+                    if internal_room_type_id:
+                        booking.requested_room_type_id = internal_room_type_id
 
                     # Update Dates safely
                     if check_in_date and check_out_date:
@@ -135,6 +152,8 @@ class ReservationImportService:
         booking.property_id = connection.property_id
         if internal_room_id:
             booking.room_id = internal_room_id
+        if internal_room_type_id:
+            booking.requested_room_type_id = internal_room_type_id
         booking.source = connection.channel_code
         booking.status_id = 1  # Default to 1 (Confirmed) based on your BookingStatus table
 

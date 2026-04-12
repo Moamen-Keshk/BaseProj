@@ -3,7 +3,11 @@ import unittest
 
 from app import create_app, db
 from app.api.models import Booking, BookingStatus, PaymentStatus, Property, Role
-from app.api.payments.services import record_booking_payment, sync_invoice_for_booking
+from app.api.payments.services import (
+    record_booking_payment,
+    refund_booking_payment,
+    sync_invoice_for_booking,
+)
 
 
 class InvoiceServiceTestCase(unittest.TestCase):
@@ -88,3 +92,44 @@ class InvoiceServiceTestCase(unittest.TestCase):
                 source='front_desk',
                 status='succeeded',
             )
+
+    def test_authorization_does_not_reduce_balance(self):
+        invoice = sync_invoice_for_booking(self.booking)
+        transaction, invoice = record_booking_payment(
+            booking=self.booking,
+            amount=100.0,
+            payment_method='card',
+            source='front_desk_authorization',
+            status='authorized',
+            reference='AUTH-100',
+        )
+        db.session.commit()
+
+        self.assertEqual(transaction.status, 'authorized')
+        self.assertEqual(invoice.amount_paid, 0.0)
+        self.assertEqual(invoice.balance_due, 300.0)
+
+    def test_refund_reduces_paid_balance(self):
+        sync_invoice_for_booking(self.booking)
+        transaction, invoice = record_booking_payment(
+            booking=self.booking,
+            amount=150.0,
+            payment_method='cash',
+            source='front_desk',
+            status='succeeded',
+            reference='FD-150',
+        )
+        db.session.commit()
+
+        refund_txn, invoice = refund_booking_payment(
+            booking=self.booking,
+            transaction=transaction,
+            amount=50.0,
+            reason='Guest shortened stay',
+        )
+        db.session.commit()
+
+        self.assertEqual(refund_txn.transaction_type, 'refund')
+        self.assertEqual(invoice.amount_paid, 100.0)
+        self.assertEqual(invoice.balance_due, 200.0)
+        self.assertEqual(invoice.status, 'partially_paid')

@@ -10,6 +10,7 @@ from app.api.models import (
     Property,
     RatePlan,
     Room,
+    RoomType,
     RoomCleaningStatus,
     RoomStatus,
     Season,
@@ -164,3 +165,42 @@ class PricingEngineTestCase(unittest.TestCase):
         self.assertEqual(restrictions['min_los'], 2)
         self.assertEqual(restrictions['max_los'], 4)
         self.assertTrue(restrictions['closed_to_arrival'])
+
+    def test_room_type_backed_rate_plan_generates_room_online(self):
+        room_type = RoomType(
+            property_id=self.property.id,
+            name='Deluxe King',
+            description='Primary OTA room type',
+            max_guests=2,
+            max_adults=2,
+            max_children=0,
+            max_infants=0,
+            is_active=True,
+        )
+        db.session.add(room_type)
+        db.session.commit()
+
+        self.room.room_type_id = room_type.id
+        db.session.commit()
+
+        rate_plan = RatePlan(
+            name='Deluxe BAR',
+            base_rate=150.0,
+            property_id=self.property.id,
+            category_id=None,
+            room_type_id=room_type.id,
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            pricing_type='standard',
+            is_active=True,
+        )
+        db.session.add(rate_plan)
+        db.session.commit()
+
+        generate_or_update_room_online_for_rate_plan(rate_plan)
+
+        amount = ARIService.get_rate(self.property.id, self.room.id, date(2026, 5, 5))
+        restrictions = ARIService.get_restrictions(self.property.id, self.room.id, date(2026, 5, 5))
+
+        self.assertEqual(str(amount), '150.0')
+        self.assertEqual(restrictions['rate_plan_id'], rate_plan.id)

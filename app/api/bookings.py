@@ -11,6 +11,7 @@ from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
 from app.api.constants import Constants
 from app.api.payments.services import record_booking_payment, sync_invoice_for_booking
+from app.api.utils.housekeeping_logic import apply_room_cleaning_status
 
 # --- CHANNEL MANAGER IMPORTS ---
 from app.api.channel_manager.models import ChannelReservationLink
@@ -35,6 +36,11 @@ def new_booking(property_id):
         payment_method = booking_data.get('payment_method') or 'cash'
         payment_reference = booking_data.get('payment_reference')
         payment_notes = booking_data.get('payment_notes')
+        initial_payment_status = booking_data.get('initial_payment_status') or 'succeeded'
+        initial_payment_source = booking_data.get('initial_payment_source') or (
+            'front_desk' if auto_check_in else 'manual'
+        )
+        initial_payment_channel = booking_data.get('external_channel')
 
         try:
             booking = Booking.from_json(booking_data)
@@ -71,11 +77,13 @@ def new_booking(property_id):
                 booking=booking,
                 amount=initial_amount_paid,
                 payment_method=payment_method,
-                source='front_desk' if auto_check_in else 'manual',
-                status='succeeded',
+                source=initial_payment_source,
+                status=initial_payment_status,
                 reference=payment_reference,
                 notes=payment_notes,
                 recorded_by=user_id,
+                external_channel=initial_payment_channel,
+                is_vcc=payment_method == 'ota_vcc',
             )
 
         if auto_check_in:
@@ -202,13 +210,19 @@ def edit_booking(property_id, booking_id):
             })), 409
         # ==========================================
 
-        # Update fields dynamically (amount_paid is already supported here)
+        if 'amount_paid' in booking_data:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Direct amount_paid edits are disabled. Record payments via the payments module.'
+            })), 400
+
+        # Update fields dynamically
         updateable_fields = [
             'first_name', 'last_name', 'email', 'phone', 'number_of_adults',
             'number_of_children', 'payment_status_id', 'status_id', 'note',
             'special_request', 'check_in', 'check_out', 'check_in_day',
             'check_in_month', 'check_in_year', 'check_out_day', 'check_out_month',
-            'check_out_year', 'number_of_days', 'rate', 'room_id', 'amount_paid'
+            'check_out_year', 'number_of_days', 'rate', 'room_id'
         ]
 
         for field in updateable_fields:
@@ -408,7 +422,13 @@ def check_out_booking(property_id, booking_id):
 
         room = db.session.query(Room).filter_by(id=booking.room_id).first()
         if room:
-            room.cleaning_status_id = Constants.RoomCleaningStatusCoding['Dirty']
+            apply_room_cleaning_status(
+                room,
+                booking.property_id,
+                Constants.RoomCleaningStatusCoding['Dirty'],
+                'System Checkout',
+                allow_system=True,
+            )
 
         db.session.commit()
 
@@ -709,7 +729,7 @@ def assign_nightly_rates(booking):
     booking.rate = total
 
 
-from app.api.models import User, RoomCleaningLog
+from app.api.models import User
 
 
 def handle_same_day_checkin_housekeeping(booking):
@@ -739,23 +759,15 @@ def handle_same_day_checkin_housekeeping(booking):
             ).first()
 
             if not checkout_today:
-                # Update Room Status
-                old_status = room.cleaning_status_id
-                room.cleaning_status_id = refresh_status_id
-                db.session.add(room)
-
-                # Maintain Audit Log
                 user = db.session.query(User).filter_by(uid=booking.creator_id).first()
                 user_name = user.username if user else "System Auto-Refresh"
-
-                cleaning_log = RoomCleaningLog(
-                    property_id=booking.property_id,
-                    room_id=room.id,
-                    user_name=user_name,
-                    old_status_id=old_status,
-                    new_status_id=refresh_status_id
+                apply_room_cleaning_status(
+                    room,
+                    booking.property_id,
+                    refresh_status_id,
+                    user_name,
+                    allow_system=True,
                 )
-                db.session.add(cleaning_log)
 
 def check_room_availability(room_id, check_in, check_out, exclude_booking_id=None):
     """

@@ -8,6 +8,7 @@ from app.api.models import Booking
 from app.api.payments.models import BookingVCC, Transaction
 from app.api.payments.services import (
     create_payment_intent_for_booking,
+    mark_transaction_authorized,
     mark_transaction_failed,
     mark_transaction_succeeded,
 )
@@ -68,13 +69,26 @@ def stripe_webhook():
         # Update DB
         txn = Transaction.query.filter_by(stripe_payment_intent_id=payment_intent['id']).first()
         if txn:
+            txn.processor_reference = payment_intent.get('latest_charge')
+            txn.processor_status = payment_intent.get('status')
             mark_transaction_succeeded(txn)
+            db.session.commit()
+
+    elif event['type'] == 'payment_intent.amount_capturable_updated':
+        payment_intent = event['data']['object']
+        txn = Transaction.query.filter_by(stripe_payment_intent_id=payment_intent['id']).first()
+        if txn:
+            txn.processor_reference = payment_intent.get('latest_charge')
+            txn.processor_status = payment_intent.get('status')
+            mark_transaction_authorized(txn)
             db.session.commit()
 
     elif event['type'] == 'payment_intent.payment_failed':
         payment_intent = event['data']['object']
         txn = Transaction.query.filter_by(stripe_payment_intent_id=payment_intent['id']).first()
         if txn:
+            txn.processor_reference = payment_intent.get('latest_charge')
+            txn.processor_status = payment_intent.get('status')
             mark_transaction_failed(txn)
             db.session.commit()
 

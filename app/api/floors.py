@@ -61,8 +61,8 @@ def edit_floor(property_id, floor_id):
                     if room:
                         if 'room_number' in room_data:
                             room.room_number = room_data['room_number']
-                        if 'category_id' in room_data:
-                            room.category_id = room_data['category_id']
+                        if 'room_type_id' in room_data or 'category_id' in room_data:
+                            room.room_type_id = room_data.get('room_type_id', room_data.get('category_id'))
                 else:
                     new_room = Room.from_json(room_data)
                     floor.rooms.append(new_room)

@@ -1,7 +1,9 @@
 from datetime import datetime, timezone, timedelta
 from app.celery_app import celery
 from app.api.channel_manager.models import ChannelRoomMap
+from app.api.models import Room
 from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
+from app.api.utils.pricing_engine import get_room_sellable_type_id
 
 
 @celery.task
@@ -19,7 +21,20 @@ def process_bulk_ari_push(property_id: int):
     if not active_mappings:
         return {"status": "skipped", "message": "No active mappings found."}
 
-    unique_room_ids = list(set([m.internal_room_id for m in active_mappings]))
+    unique_room_ids = set()
+    property_rooms = Room.query.filter_by(property_id=property_id).all()
+    for mapping in active_mappings:
+        if mapping.internal_room_type_id:
+            rooms = [
+                room for room in property_rooms
+                if get_room_sellable_type_id(room) == mapping.internal_room_type_id
+            ]
+            for room in rooms:
+                unique_room_ids.add(room.id)
+        elif mapping.internal_room_id:
+            unique_room_ids.add(mapping.internal_room_id)
+
+    unique_room_ids = list(unique_room_ids)
 
     # Generate the next 365 dates
     start_date = datetime.now(timezone.utc).date()

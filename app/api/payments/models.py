@@ -112,17 +112,29 @@ class Transaction(db.Model):
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(3), default='usd')
     status = db.Column(db.String(50), default='pending')  # pending, succeeded, failed
+    transaction_type = db.Column(db.String(32), default='payment')
+    parent_transaction_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=True)
     payment_method = db.Column(db.String(32), default='card')
     source = db.Column(db.String(32), default='manual')
+    external_channel = db.Column(db.String(32), nullable=True)
     reference = db.Column(db.String(128), nullable=True)
+    processor_reference = db.Column(db.String(128), nullable=True)
+    processor_status = db.Column(db.String(64), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     recorded_by = db.Column(db.String(32), nullable=True)
     is_vcc = db.Column(db.Boolean, default=False)  # True if OTA Virtual Card
+    effective_date = db.Column(db.Date, nullable=True)
+    settlement_date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
 
     # Establish relationship to Booking model
     booking = db.relationship('Booking', backref=db.backref('transactions', lazy=True))
     invoice = db.relationship('Invoice', back_populates='payments')
+    parent_transaction = db.relationship(
+        'Transaction',
+        remote_side=[id],
+        backref=db.backref('child_transactions', lazy=True),
+    )
 
     def to_json(self):
         return {
@@ -133,12 +145,19 @@ class Transaction(db.Model):
             'amount': float(self.amount or 0.0),
             'currency': self.currency,
             'status': self.status,
+            'transaction_type': self.transaction_type,
+            'parent_transaction_id': self.parent_transaction_id,
             'payment_method': self.payment_method,
             'source': self.source,
+            'external_channel': self.external_channel,
             'reference': self.reference,
+            'processor_reference': self.processor_reference,
+            'processor_status': self.processor_status,
             'notes': self.notes,
             'recorded_by': self.recorded_by,
             'is_vcc': self.is_vcc,
+            'effective_date': self.effective_date.isoformat() if self.effective_date else None,
+            'settlement_date': self.settlement_date.isoformat() if self.settlement_date else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

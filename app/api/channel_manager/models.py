@@ -48,6 +48,7 @@ class ChannelRoomMap(db.Model):
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
     channel_code = db.Column(db.String(32), nullable=False, index=True)
     internal_room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), nullable=False, index=True)
+    internal_room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'), nullable=True, index=True)
     external_room_id = db.Column(db.String(128), nullable=False)
     external_room_name = db.Column(db.String(255))
     is_active = db.Column(db.Boolean, default=True)
@@ -62,7 +63,8 @@ class ChannelRoomMap(db.Model):
             'id': self.id,
             'property_id': self.property_id,
             'channel_code': self.channel_code,
-            'internal_room_id': self.internal_room_id,
+            'internal_room_id': self.internal_room_type_id or self.internal_room_id,
+            'internal_room_type_id': self.internal_room_type_id,
             'external_room_id': self.external_room_id,
             'external_room_name': self.external_room_name,
             'is_active': self.is_active,

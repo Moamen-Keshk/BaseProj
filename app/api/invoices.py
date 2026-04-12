@@ -12,6 +12,7 @@ from app.api.payments.models import BookingVCC, Invoice, Transaction
 from app.api.payments.services import (
     create_payment_intent_for_booking,
     record_booking_payment,
+    refund_booking_payment,
     sync_invoice_for_booking,
 )
 from app.api.payments.utils import decrypt_data
@@ -26,6 +27,14 @@ def _parse_date(value):
 
 def _get_booking(property_id, booking_id):
     return Booking.query.filter_by(id=booking_id, property_id=property_id).first()
+
+
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 @api.route('/properties/<int:property_id>/invoices', methods=['GET', 'OPTIONS'], strict_slashes=False)
@@ -199,6 +208,12 @@ def add_booking_payment(property_id, booking_id):
             notes=payload.get('notes'),
             currency=payload.get('currency', 'usd'),
             recorded_by=get_current_user(),
+            is_vcc=_parse_bool(payload.get('is_vcc')) or payload.get('payment_method') == 'ota_vcc',
+            external_channel=payload.get('external_channel'),
+            processor_reference=payload.get('processor_reference'),
+            processor_status=payload.get('processor_status'),
+            effective_date=_parse_date(payload.get('effective_date')),
+            settlement_date=_parse_date(payload.get('settlement_date')),
         )
         db.session.commit()
 
@@ -219,6 +234,61 @@ def add_booking_payment(property_id, booking_id):
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to record payment.'
+        })), 500
+
+
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/payments/<int:transaction_id>/refund', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_finance')
+def refund_booking_payment_route(property_id, booking_id, transaction_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        booking = _get_booking(property_id, booking_id)
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        transaction = Transaction.query.filter_by(
+            id=transaction_id,
+            booking_id=booking.id,
+        ).first()
+        if not transaction:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Payment not found.'
+            })), 404
+
+        payload = request.get_json(silent=True) or {}
+        refund_txn, invoice = refund_booking_payment(
+            booking=booking,
+            transaction=transaction,
+            amount=payload.get('amount'),
+            reason=payload.get('reason'),
+            recorded_by=get_current_user(),
+            settlement_date=_parse_date(payload.get('settlement_date')),
+        )
+        db.session.commit()
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Refund recorded successfully.',
+            'data': {
+                'payment': refund_txn.to_json(),
+                'invoice': invoice.to_json(),
+            }
+        })), 201
+    except ValueError as exc:
+        db.session.rollback()
+        return make_response(jsonify({'status': 'fail', 'message': str(exc)})), 400
+    except Exception as exc:
+        logging.exception("Error in refund_booking_payment_route: %s", exc)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to record refund.'
         })), 500
 
 
@@ -294,6 +364,10 @@ def get_booking_vcc(property_id, booking_id):
                 'exp_month': vcc_record.exp_month,
                 'exp_year': vcc_record.exp_year,
                 'cvc': decrypt_data(vcc_record.encrypted_cvc),
+                'can_charge_now': (
+                    vcc_record.activation_date is None
+                    or vcc_record.activation_date.date() <= date.today()
+                ),
                 'activation_date': (
                     vcc_record.activation_date.isoformat()
                     if vcc_record.activation_date else None

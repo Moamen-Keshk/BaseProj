@@ -1,9 +1,10 @@
 import logging
 from flask import request, make_response, jsonify
 from . import api
-from app.api.models import Room, RoomCleaningLog
+from app.api.models import Room
 from .. import db
 from app.api.decorators import require_permission, require_active_staff
+from app.api.utils.housekeeping_logic import apply_room_cleaning_status
 
 
 @api.route('/properties/<int:property_id>/rooms', methods=['POST'])
@@ -53,8 +54,8 @@ def edit_room(property_id, room_id):
         # Update room fields
         if 'room_number' in room_data:
             room.room_number = room_data['room_number']
-        if 'category_id' in room_data:
-            room.category_id = room_data['category_id']
+        if 'room_type_id' in room_data or 'category_id' in room_data:
+            room.room_type_id = room_data.get('room_type_id', room_data.get('category_id'))
         if 'floor_id' in room_data:
             room.floor_id = room_data['floor_id']
         if 'status_id' in room_data:
@@ -91,22 +92,19 @@ def update_room_status(property_id, room_id):
         user_name = room_data.get('user_name', 'Unknown User')
 
         if 'cleaning_status_id' in room_data and room.cleaning_status_id != room_data['cleaning_status_id']:
-            old_status = room.cleaning_status_id
-            new_status = room_data['cleaning_status_id']
-            room.cleaning_status_id = new_status
-
-            # Record the change
-            log_entry = RoomCleaningLog(
-                property_id=property_id,
-                room_id=room.id,
-                user_name=user_name,
-                old_status_id=old_status,
-                new_status_id=new_status
+            new_status = int(room_data['cleaning_status_id'])
+            apply_room_cleaning_status(
+                room,
+                property_id,
+                new_status,
+                user_name,
             )
-            db.session.add(log_entry)
             db.session.commit()
 
         return make_response(jsonify({'status': 'success', 'message': 'Status updated.'})), 200
+    except ValueError as e:
+        db.session.rollback()
+        return make_response(jsonify({'status': 'fail', 'message': str(e)})), 400
     except Exception as e:
         db.session.rollback()
         return make_response(jsonify({'status': 'error', 'message': str(e)})), 500

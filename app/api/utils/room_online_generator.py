@@ -2,7 +2,12 @@ from datetime import timedelta
 
 from app import db
 from app.api.models import Room, RoomOnline, RatePlan
-from app.api.utils.pricing_engine import calculate_nightly_rate, get_seasons_for_property
+from app.api.utils.pricing_engine import (
+    calculate_nightly_rate,
+    get_rate_plan_room_type_id,
+    get_room_sellable_type_id,
+    get_seasons_for_property,
+)
 
 
 def _date_range(start_date, end_date):
@@ -12,12 +17,12 @@ def _date_range(start_date, end_date):
         current += timedelta(days=1)
 
 
-def _candidate_rate_plans(property_id, category_id, target_date):
-    return RatePlan.query.filter_by(
-        property_id=property_id,
-        category_id=category_id,
-        is_active=True,
-    ).filter(
+def _candidate_rate_plans(property_id, sellable_type_id, target_date):
+    return RatePlan.query.filter_by(property_id=property_id, is_active=True).filter(
+        db.or_(
+            RatePlan.room_type_id == sellable_type_id,
+            RatePlan.category_id == sellable_type_id,
+        ),
         RatePlan.start_date <= target_date,
         RatePlan.end_date >= target_date,
     ).all()
@@ -45,10 +50,10 @@ def _choose_effective_rate_plan(candidate_rate_plans, target_date, seasons):
 
 
 def rebuild_room_online_for_category_range(property_id, category_id, start_date, end_date):
-    rooms = Room.query.filter_by(
-        property_id=property_id,
-        category_id=category_id,
-    ).all()
+    rooms = [
+        room for room in Room.query.filter_by(property_id=property_id).all()
+        if get_room_sellable_type_id(room) == category_id
+    ]
     seasons = get_seasons_for_property(property_id)
 
     for target_date in _date_range(start_date, end_date):
@@ -57,6 +62,7 @@ def rebuild_room_online_for_category_range(property_id, category_id, start_date,
 
         for room in rooms:
             room_online = RoomOnline.query.filter_by(room_id=room.id, date=target_date).first()
+            room_type_id = get_room_sellable_type_id(room)
 
             if room_online and room_online.rate_plan_id is None:
                 continue
@@ -70,7 +76,8 @@ def rebuild_room_online_for_category_range(property_id, category_id, start_date,
                 room_online = RoomOnline(
                     room_id=room.id,
                     property_id=property_id,
-                    category_id=category_id,
+                    category_id=room.category_id,
+                    room_type_id=room_type_id,
                     rate_plan_id=chosen_plan.id,
                     date=target_date,
                     price=chosen_rate,
@@ -78,7 +85,8 @@ def rebuild_room_online_for_category_range(property_id, category_id, start_date,
                 db.session.add(room_online)
             else:
                 room_online.property_id = property_id
-                room_online.category_id = category_id
+                room_online.category_id = room.category_id
+                room_online.room_type_id = room_type_id
                 room_online.rate_plan_id = chosen_plan.id
                 room_online.price = chosen_rate
 
@@ -87,8 +95,9 @@ def rebuild_room_online_for_category_range(property_id, category_id, start_date,
 
 def rebuild_room_online_for_property_range(property_id, start_date, end_date):
     category_ids = {
-        room.category_id
+        get_room_sellable_type_id(room)
         for room in Room.query.filter_by(property_id=property_id).all()
+        if get_room_sellable_type_id(room)
     }
 
     for category_id in category_ids:
@@ -103,7 +112,7 @@ def rebuild_room_online_for_property_range(property_id, start_date, end_date):
 def generate_or_update_room_online_for_rate_plan(rate_plan):
     rebuild_room_online_for_category_range(
         property_id=rate_plan.property_id,
-        category_id=rate_plan.category_id,
+        category_id=get_rate_plan_room_type_id(rate_plan),
         start_date=rate_plan.start_date,
         end_date=rate_plan.end_date,
     )

@@ -1,3 +1,4 @@
+from app import db
 from app.api.models import RatePlan, Season
 
 
@@ -6,10 +7,12 @@ def date_ranges_overlap(start_date, end_date, other_start_date, other_end_date):
 
 
 def get_overlapping_rate_plans(property_id, category_id, start_date, end_date, exclude_rate_plan_id=None):
-    query = RatePlan.query.filter_by(
-        property_id=property_id,
-        category_id=category_id,
-    ).filter(
+    query = RatePlan.query.filter(
+        RatePlan.property_id == property_id,
+        db.or_(
+            RatePlan.room_type_id == category_id,
+            RatePlan.category_id == category_id,
+        ),
         RatePlan.start_date <= end_date,
         RatePlan.end_date >= start_date,
     )

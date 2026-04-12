@@ -13,7 +13,11 @@ from app.api.channel_manager.services.pms_sync import (
     queue_block_ari_sync,
     queue_block_transition_ari_sync,
 )
-from app.api.utils.pricing_engine import calculate_nightly_rate
+from app.api.utils.pricing_engine import (
+    calculate_nightly_rate,
+    get_rate_plan_room_type_id,
+    get_room_sellable_type_id,
+)
 
 
 def parse_date(value):
@@ -212,10 +216,16 @@ def update_room_online_for_block(block):
     if not room:
         raise ValueError("Room not found for block")
 
+    sellable_type_id = get_room_sellable_type_id(room)
+
     rate_plans = RatePlan.query.filter_by(
         property_id=block.property_id,
-        category_id=room.category_id,
         is_active=True
+    ).filter(
+        db.or_(
+            RatePlan.room_type_id == sellable_type_id,
+            RatePlan.category_id == sellable_type_id,
+        )
     ).all()
 
     seasons = Season.query.filter_by(property_id=block.property_id).all()
@@ -226,11 +236,25 @@ def update_room_online_for_block(block):
             date=current_date
         ).first()
 
-        if not room_online:
-            matching_plan = next(
-                (rp for rp in rate_plans if rp.start_date <= current_date <= rp.end_date),
-                None,
+        matching_plans = [rp for rp in rate_plans if rp.start_date <= current_date <= rp.end_date]
+        chosen_plan = None
+        if matching_plans:
+            matching_plans.sort(
+                key=lambda plan: (
+                    calculate_nightly_rate(
+                        rate_plan=plan,
+                        target_date=current_date,
+                        stay_length=1,
+                        adults=plan.included_occupancy or 2,
+                        children=0,
+                        seasons=seasons,
+                    ),
+                    plan.id,
+                )
             )
+            chosen_plan = matching_plans[0]
+
+        if not room_online:
             price = resolve_price_for_block(
                 room_date=current_date,
                 rate_plans=rate_plans,
@@ -241,20 +265,44 @@ def update_room_online_for_block(block):
                 room_id=block.room_id,
                 property_id=block.property_id,
                 category_id=room.category_id,
-                rate_plan_id=matching_plan.id if matching_plan else None,
+                room_type_id=sellable_type_id,
+                rate_plan_id=chosen_plan.id if chosen_plan else None,
                 date=current_date,
                 price=price,
                 room_status_id=Constants.RoomStatusCoding['Blocked'],
             )
             db.session.add(room_online)
         else:
+            room_online.room_type_id = sellable_type_id
+            room_online.rate_plan_id = chosen_plan.id if chosen_plan else room_online.rate_plan_id
             room_online.room_status_id = Constants.RoomStatusCoding['Blocked']
 
         current_date += timedelta(days=1)
 
 
 def resolve_price_for_block(room_date, rate_plans, seasons):
-    plan = next((rp for rp in rate_plans if rp.start_date <= room_date <= rp.end_date), None)
+    if not rate_plans:
+        return 0.0
+
+    matching_plans = [rp for rp in rate_plans if rp.start_date <= room_date <= rp.end_date]
+    if not matching_plans:
+        return 0.0
+
+    matching_plans.sort(
+        key=lambda plan: (
+            calculate_nightly_rate(
+                rate_plan=plan,
+                target_date=room_date,
+                stay_length=1,
+                adults=plan.included_occupancy or 2,
+                children=0,
+                seasons=seasons,
+            ),
+            get_rate_plan_room_type_id(plan) or 0,
+            plan.id,
+        )
+    )
+    plan = matching_plans[0]
     if not plan:
         return 0.0
 

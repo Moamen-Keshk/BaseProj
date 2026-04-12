@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.api.models import Room
 from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
+from app.api.utils.pricing_engine import get_rate_plan_room_type_id, get_room_sellable_type_id
 
 
 def _date_range(start_date, end_date, include_end=True):
@@ -60,10 +61,9 @@ def _room_ids_for_property(property_id):
 
 def _room_ids_for_property_category(property_id, category_id):
     return [
-        room.id for room in Room.query.filter_by(
-            property_id=property_id,
-            category_id=category_id
-        ).all()
+        room.id
+        for room in Room.query.filter_by(property_id=property_id).all()
+        if get_room_sellable_type_id(room) == category_id
     ]
 
 
@@ -173,7 +173,7 @@ def queue_rate_plan_ari_sync(rate_plan, reason: str):
         return
 
     property_id = getattr(rate_plan, 'property_id', None)
-    category_id = getattr(rate_plan, 'category_id', None)
+    category_id = get_rate_plan_room_type_id(rate_plan)
     start_date = getattr(rate_plan, 'start_date', None)
     end_date = getattr(rate_plan, 'end_date', None)
 
@@ -192,6 +192,7 @@ def queue_rate_plan_ari_sync(rate_plan, reason: str):
 def queue_rate_plan_transition_ari_sync(
     old_property_id,
     old_category_id,
+    old_room_type_id,
     old_start_date,
     old_end_date,
     rate_plan,
@@ -200,6 +201,7 @@ def queue_rate_plan_transition_ari_sync(
     old_snapshot = SimpleNamespace(
         property_id=old_property_id,
         category_id=old_category_id,
+        room_type_id=old_room_type_id,
         start_date=old_start_date,
         end_date=old_end_date,
     )

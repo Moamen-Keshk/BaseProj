@@ -27,12 +27,12 @@ def new_room_online(property_id):
 
         room_id = data.get('room_id')
         date_str = data.get('date')
-        category_id = data.get('category_id')
+        category_id = data.get('room_type_id') or data.get('category_id')
 
         if not all([room_id, date_str, category_id]):
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Missing required fields (room_id, date, category_id).'
+                'message': 'Missing required fields (room_id, date, room_type_id/category_id).'
             })), 400
 
         target_date = datetime.fromisoformat(date_str).date()
@@ -97,13 +97,15 @@ def update_room_online(property_id, rate_id):
             room_online.price = data['price']
         if 'date' in data:
             room_online.date = datetime.fromisoformat(data['date']).date()
-        if 'category_id' in data:
-            room_online.category_id = data['category_id']
+        if 'room_type_id' in data or 'category_id' in data:
+            room_online.room_type_id = data.get('room_type_id', data.get('category_id'))
+            if 'category_id' in data:
+                room_online.category_id = data['category_id']
         if 'room_id' in data:
             room_online.room_id = data['room_id']
         if 'room_status_id' in data:
             room_online.room_status_id = data['room_status_id']
-        if any(field in data for field in ('price', 'date', 'category_id', 'room_id')):
+        if any(field in data for field in ('price', 'date', 'category_id', 'room_type_id', 'room_id')):
             room_online.rate_plan_id = None
 
         db.session.commit()
@@ -205,17 +207,19 @@ def room_online_by_category(property_id):
         return make_response(jsonify({"status": "ok"})), 200
 
     try:
-        category_id = request.args.get('category_id')
+        category_id = request.args.get('room_type_id') or request.args.get('category_id')
 
         if not category_id:
             return make_response(jsonify({
                 'status': 'fail',
-                'message': 'Missing category_id'
+                'message': 'Missing room_type_id/category_id'
             })), 400
 
-        rooms = RoomOnline.query.filter_by(
-            property_id=property_id,
-            category_id=category_id
+        rooms = RoomOnline.query.filter_by(property_id=property_id).filter(
+            db.or_(
+                RoomOnline.room_type_id == category_id,
+                RoomOnline.category_id == category_id,
+            )
         ).order_by(RoomOnline.date).all()
 
         return make_response(jsonify({

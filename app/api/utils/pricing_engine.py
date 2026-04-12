@@ -1,10 +1,23 @@
 from datetime import timedelta
 
+from app import db
 from app.api.models import RatePlan, Room, RoomOnline, Season
 
 
 VALID_PRICING_TYPES = {'standard', 'derived', 'occupancy', 'los'}
 VALID_DERIVED_ADJUSTMENT_TYPES = {'percent', 'amount'}
+
+
+def get_rate_plan_room_type_id(rate_plan):
+    return getattr(rate_plan, 'room_type_id', None) or getattr(rate_plan, 'category_id', None)
+
+
+def get_room_sellable_type_id(room):
+    return getattr(room, 'room_type_id', None) or getattr(room, 'category_id', None)
+
+
+def get_room_online_sellable_type_id(room_online):
+    return getattr(room_online, 'room_type_id', None) or getattr(room_online, 'category_id', None)
 
 
 def normalize_los_pricing(los_pricing):
@@ -222,11 +235,15 @@ def get_applicable_rate_plan_for_room(property_id, room_id, stay_date):
     if room is None:
         return None
 
-    return RatePlan.query.filter_by(
-        property_id=property_id,
-        category_id=room.category_id,
-        is_active=True,
-    ).filter(
+    sellable_type_id = get_room_sellable_type_id(room)
+    if not sellable_type_id:
+        return None
+
+    return RatePlan.query.filter_by(property_id=property_id, is_active=True).filter(
+        db.or_(
+            RatePlan.room_type_id == sellable_type_id,
+            RatePlan.category_id == sellable_type_id,
+        ),
         RatePlan.start_date <= stay_date,
         RatePlan.end_date >= stay_date,
     ).order_by(RatePlan.start_date, RatePlan.id).first()
