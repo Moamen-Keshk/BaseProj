@@ -4,7 +4,7 @@ from app.celery_app import celery
 from app import db
 from app.api.channel_manager.models import ChannelConnection, ChannelMessageLog, ChannelSyncJob
 from app.api.channel_manager.adapters import get_adapter
-from app.api.channel_manager.services.reservation_import_service import ReservationImportService
+from app.api.channel_manager.services.reconciliation_service import ReconciliationService
 
 
 @celery.task
@@ -38,11 +38,21 @@ def process_reservation_pull_job(job_id: int):
             cursor=job.payload_json.get('cursor')
         )
 
-        for reservation in result.get('reservations', []):
-            ReservationImportService.import_one(connection, reservation)
+        reconciliation_summary = ReconciliationService.reconcile_reservations(
+            connection=connection,
+            reservations=result.get('reservations', []),
+            snapshot_complete=False,
+            queue_acknowledgements=bool(job.payload_json.get('queue_acknowledgements', False)),
+            mark_missing_as_cancelled=False,
+        )
 
         from app.api.channel_manager.adapters.sanitizer import PayloadSanitizer
-        safe_response_body = PayloadSanitizer.mask_xml_credit_cards(result.get('raw_body', ''))
+        raw_body = result.get('raw_body', '')
+        safe_response_body = (
+            PayloadSanitizer.mask_xml_credit_cards(raw_body)
+            if isinstance(raw_body, str)
+            else str(raw_body or '')
+        )
 
         log = ChannelMessageLog(
             property_id=job.property_id,
@@ -52,7 +62,7 @@ def process_reservation_pull_job(job_id: int):
             related_job_id=job.id,
             http_status=result.get('http_status'),
             success=True,
-            response_body=safe_response_body
+            response_body=f"{safe_response_body}\n\nReconciliation: {reconciliation_summary}"
         )
         db.session.add(log)
 

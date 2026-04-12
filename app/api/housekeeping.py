@@ -6,6 +6,7 @@ from app.api.constants import Constants
 from .. import db
 from . import api
 
+
 @api.route('/properties/<int:property_id>/housekeeping', methods=['GET'])
 def get_housekeeping_data(property_id):
     date_str = request.args.get('date')
@@ -60,7 +61,8 @@ def get_housekeeping_data(property_id):
                 elif is_checkin:
                     status = "To be refreshed"  # Guest arrives, just needs a refresh
                 else:
-                    status = "Expected Idle"  # The date falls directly in the middle of a guest's stay
+                    # FIX 1: Renamed from "Expected Idle" to "Expected Occupied"
+                    status = "Expected Occupied"
 
             forecast_data.append({
                 'room_id': room.id,
@@ -75,11 +77,34 @@ def get_housekeeping_data(property_id):
     current_data = []
 
     for room in rooms:
+        # Get the physical base status from the room
+        cleaning_status = Constants.RoomCleaningStatusCoding.get(room.cleaning_status_id, 'Unknown')
+
+        # FIX 2: Globally rename "Idle" to "Occupied" if it comes directly from your DB Constants
+        if cleaning_status == 'Idle':
+            cleaning_status = 'Occupied'
+
+        # FIX 3: Bug logic override. Check if a guest is actively occupying the room today.
+        # Check-in is today or earlier, AND Check-out is strictly after today (guest stays tonight)
+        active_bookings = Booking.query.filter(
+            Booking.room_id == room.id,
+            Booking.status_id.in_([
+                Constants.BookingStatusCoding['Confirmed'],
+                Constants.BookingStatusCoding['Checked In']
+            ]),
+            Booking.check_in <= today,
+            Booking.check_out > today
+        ).all()
+
+        if active_bookings:
+            # Overwrite the physical "Clean" status with the active "Occupied" status
+            cleaning_status = 'Occupied'
+
         current_data.append({
             'room_id': room.id,
             'room_number': room.room_number,
             'cleaning_status_id': room.cleaning_status_id,
-            'cleaning_status': Constants.RoomCleaningStatusCoding.get(room.cleaning_status_id, 'Unknown')
+            'cleaning_status': cleaning_status
         })
 
     return jsonify({'type': 'today', 'data': current_data}), 200

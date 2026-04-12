@@ -2,6 +2,10 @@ from app.api.channel_manager.adapters.base import BaseChannelAdapter
 from app.api.channel_manager.adapters.booking_com.client import BookingComClient
 from app.api.channel_manager.adapters.booking_com.mapper import BookingComMapper
 from app.api.channel_manager.adapters.booking_com.parser import BookingComParser
+from app.api.exceptions import ChannelIntegrationError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BookingComAdapter(BaseChannelAdapter):
@@ -68,17 +72,71 @@ class BookingComAdapter(BaseChannelAdapter):
         }
 
     def fetch_external_rooms(self, connection) -> list[dict]:
-        # TODO: Implement actual Booking.com API call (e.g., RoomList request)
-        # Mocking the response for your frontend UI mapping dropdowns
-        return [
-            {"id": "1001", "name": "Standard Double Room", "capacity": 2},
-            {"id": "1002", "name": "Deluxe King Suite", "capacity": 2},
-            {"id": "1003", "name": "Family Room with Sea View", "capacity": 4}
-        ]
+        """
+        Fetches the list of rooms configured on Booking.com for this property connection.
+
+        :param connection: ChannelConnection instance containing credentials and hotel config.
+        :return: A list of dicts with 'external_id' and 'external_name'.
+        """
+        logger.info(f"[Booking.com] Fetching external rooms for connection {connection.id}")
+
+        try:
+            client = BookingComClient(connection)
+
+            # 1. Build the XML/JSON request payload using the mapper
+            request_payload = BookingComMapper.build_room_request(connection)
+
+            # 2. Send the request via the client (e.g., to OTA_HotelDescriptiveInfo or B.XML endpoint)
+            response_content = client.send_request(
+                endpoint="hotels/xml/rooms",  # Update to actual endpoint path
+                payload=request_payload
+            )
+
+            # 3. Parse the response
+            external_rooms = BookingComParser.parse_rooms_response(response_content)
+
+            logger.info(
+                f"[Booking.com] Successfully fetched {len(external_rooms)} rooms for connection {connection.id}")
+            return external_rooms
+
+        except Exception as e:
+            logger.error(
+                f"[Booking.com] Failed to fetch external rooms for connection {connection.id}. Error: {str(e)}",
+                exc_info=True
+            )
+            raise ChannelIntegrationError(f"Failed to retrieve rooms from Booking.com: {str(e)}") from e
 
     def fetch_external_rate_plans(self, connection) -> list[dict]:
-        # TODO: Implement actual Booking.com API call (e.g., RatePlanList request)
-        return [
-            {"id": "BAR", "name": "Best Available Rate", "pricing_model": "PerDay"},
-            {"id": "NRF", "name": "Non-Refundable Rate", "pricing_model": "PerDay"}
-        ]
+        """
+        Fetches the list of rate plans configured on Booking.com for this property connection.
+
+        :param connection: ChannelConnection instance.
+        :return: A list of dicts with 'external_id' and 'external_name'.
+        """
+        logger.info(f"[Booking.com] Fetching external rate plans for connection {connection.id}")
+
+        try:
+            client = BookingComClient(connection)
+
+            # 1. Build the payload
+            request_payload = BookingComMapper.build_rate_plan_request(connection)
+
+            # 2. Send the request
+            response_content = client.send_request(
+                endpoint="hotels/xml/rateplans",  # Update to actual endpoint path
+                payload=request_payload
+            )
+
+            # 3. Parse the response
+            external_rate_plans = BookingComParser.parse_rate_plans_response(response_content)
+
+            logger.info(
+                f"[Booking.com] Successfully fetched {len(external_rate_plans)} rate plans for connection {connection.id}")
+            return external_rate_plans
+
+        except Exception as e:
+            logger.error(
+                f"[Booking.com] Failed to fetch external rate plans for connection {connection.id}. Error: {str(e)}",
+                exc_info=True
+            )
+            raise ChannelIntegrationError(f"Failed to retrieve rate plans from Booking.com: {str(e)}") from e

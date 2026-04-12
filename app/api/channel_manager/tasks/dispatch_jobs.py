@@ -6,6 +6,7 @@ from app.api.channel_manager.models import ChannelSyncJob
 from app.api.channel_manager.tasks.push_ari import process_ari_push_job
 from app.api.channel_manager.tasks.pull_reservations import process_reservation_pull_job
 from app.api.channel_manager.tasks.ack_reservations import process_reservation_ack_job
+from app.api.channel_manager.tasks.reconcile import process_reconciliation_job
 
 
 def _dispatch_job(job: ChannelSyncJob):
@@ -21,6 +22,8 @@ def _dispatch_job(job: ChannelSyncJob):
         process_reservation_pull_job.delay(job.id)
     elif job.job_type == 'reservation_ack':
         process_reservation_ack_job.delay(job.id)
+    elif job.job_type == 'reconcile':
+        process_reconciliation_job.delay(job.id)
     else:
         job.status = 'failed'
         job.last_error = f'Unsupported job_type: {job.job_type}'

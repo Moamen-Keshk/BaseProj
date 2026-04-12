@@ -1,4 +1,11 @@
+import logging
 from app.api.channel_manager.adapters.base import BaseChannelAdapter
+from app.api.channel_manager.adapters.expedia.client import ExpediaClient
+from app.api.channel_manager.adapters.expedia.mapper import ExpediaMapper
+from app.api.channel_manager.adapters.expedia.parser import ExpediaParser
+from app.api.exceptions import ChannelIntegrationError
+
+logger = logging.getLogger(__name__)
 
 
 class ExpediaAdapter(BaseChannelAdapter):
@@ -35,10 +42,10 @@ class ExpediaAdapter(BaseChannelAdapter):
         }
 
     def acknowledge_reservation(
-        self,
-        connection,
-        external_reservation_id: str,
-        payload: dict | None = None,
+            self,
+            connection,
+            external_reservation_id: str,
+            payload: dict | None = None,
     ) -> dict:
         return {
             'success': True,
@@ -47,15 +54,71 @@ class ExpediaAdapter(BaseChannelAdapter):
         }
 
     def fetch_external_rooms(self, connection) -> list[dict]:
-        # TODO: Implement Expedia Product API call to fetch RoomTypes
-        return [
-            {"id": "EXP-RM-201", "name": "Standard Room", "capacity": 2},
-            {"id": "EXP-RM-202", "name": "Executive Suite", "capacity": 3}
-        ]
+        """
+        Fetches the list of room types configured on Expedia for this property.
+
+        :param connection: ChannelConnection instance.
+        :return: A list of dicts with 'external_id' and 'external_name'.
+        """
+        logger.info(f"[Expedia] Fetching external rooms for connection {connection.id}")
+
+        try:
+            client = ExpediaClient(connection)
+
+            # Expedia's Product API typically uses GET requests, mapper can handle query params/headers
+            request_params = ExpediaMapper.build_room_request(connection)
+
+            # Send the request
+            response_content = client.send_request(
+                endpoint=f"products/properties/{client.property_id}/roomTypes",
+                method='GET',
+                params=request_params
+            )
+
+            # Parse the JSON response
+            external_rooms = ExpediaParser.parse_rooms_response(response_content)
+
+            logger.info(f"[Expedia] Successfully fetched {len(external_rooms)} rooms for connection {connection.id}")
+            return external_rooms
+
+        except Exception as e:
+            logger.error(
+                f"[Expedia] Failed to fetch external rooms for connection {connection.id}. Error: {str(e)}",
+                exc_info=True
+            )
+            raise ChannelIntegrationError(f"Failed to retrieve rooms from Expedia: {str(e)}") from e
 
     def fetch_external_rate_plans(self, connection) -> list[dict]:
-        # TODO: Implement Expedia Product API call to fetch RatePlans
-        return [
-            {"id": "EXP-RP-1", "name": "Standard Rate", "pricing_model": "OccupancyBased"},
-            {"id": "EXP-RP-2", "name": "Bed & Breakfast", "pricing_model": "OccupancyBased"}
-        ]
+        """
+        Fetches the list of rate plans configured on Expedia for this property.
+
+        :param connection: ChannelConnection instance.
+        :return: A list of dicts with 'external_id' and 'external_name'.
+        """
+        logger.info(f"[Expedia] Fetching external rate plans for connection {connection.id}")
+
+        try:
+            client = ExpediaClient(connection)
+
+            request_params = ExpediaMapper.build_rate_plan_request(connection)
+
+            # Send the request
+            response_content = client.send_request(
+                endpoint=f"products/properties/{client.property_id}/ratePlans",
+                method='GET',
+                params=request_params
+            )
+
+            # Parse the JSON response
+            external_rate_plans = ExpediaParser.parse_rate_plans_response(response_content)
+
+            logger.info(
+                f"[Expedia] Successfully fetched {len(external_rate_plans)} rate plans for connection {connection.id}")
+            return external_rate_plans
+
+        except Exception as e:
+            logger.error(
+                f"[Expedia] Failed to fetch external rate plans for connection {connection.id}. Error: {str(e)}",
+                exc_info=True
+            )
+            raise ChannelIntegrationError(f"Failed to retrieve rate plans from Expedia: {str(e)}") from e

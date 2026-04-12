@@ -1202,7 +1202,7 @@ class RoomCleaningStatus(db.Model):
             'Clean': ['CLEAN', 'green'],
             'Refresh': ['REFRESH', 'blue'],
             'Service': ['SERVICE', 'purple'],
-            'Idle': ['IDLE', 'gray'],
+            'Occupied': ['OCCUPIED', 'gray'],
             'Ready': ['READY', 'teal']
         }
         for s in status:

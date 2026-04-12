@@ -144,6 +144,38 @@ def force_sync_connection(property_id, connection_id):
         return make_response(jsonify({'status': 'error', 'message': 'Failed to sync.'})), 500
 
 
+@channel_manager.route('/properties/<int:property_id>/connections/<int:connection_id>/reconcile', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_channels')
+def reconcile_channel_connection(property_id, connection_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        connection = ChannelConnection.query.filter_by(id=connection_id, property_id=property_id).first()
+        if not connection:
+            return make_response(jsonify({'status': 'fail', 'message': 'Connection not found.'})), 404
+
+        data = request.get_json() or {}
+
+        from app.api.channel_manager.services.sync_dispatcher import SyncDispatcher
+        SyncDispatcher.queue_reconciliation(
+            property_id=connection.property_id,
+            channel_code=connection.channel_code,
+            cursor=data.get('cursor'),
+            snapshot_complete=bool(data.get('snapshot_complete', True)),
+            queue_acknowledgements=bool(data.get('queue_acknowledgements', False)),
+            mark_missing_as_cancelled=bool(data.get('mark_missing_as_cancelled', False)),
+        )
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Reconciliation job queued.'
+        })), 202
+    except Exception as e:
+        logging.exception("Error queuing reconciliation: %s", str(e))
+        return make_response(jsonify({'status': 'error', 'message': 'Failed to queue reconciliation.'})), 500
+
+
 # ==========================================
 # ROOM MAPS
 # ==========================================

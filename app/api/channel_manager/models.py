@@ -105,7 +105,7 @@ class ChannelSyncJob(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
     channel_code = db.Column(db.String(32), nullable=False, index=True)
-    job_type = db.Column(db.String(32), nullable=False, index=True)  # ari_push, reservation_pull, reservation_ack
+    job_type = db.Column(db.String(32), nullable=False, index=True)  # ari_push, reservation_pull, reservation_ack, reconcile
     status = db.Column(db.String(20), nullable=False, default='pending', index=True)
     payload_json = db.Column(db.JSON, nullable=False, default=dict)
     attempts = db.Column(db.Integer, nullable=False, default=0)

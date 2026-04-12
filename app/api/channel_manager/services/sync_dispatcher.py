@@ -52,3 +52,28 @@ class SyncDispatcher:
         )
         db.session.add(job)
         db.session.commit()
+
+    @staticmethod
+    def queue_reconciliation(
+        property_id: int,
+        channel_code: str,
+        *,
+        cursor: dict | None = None,
+        snapshot_complete: bool = True,
+        queue_acknowledgements: bool = False,
+        mark_missing_as_cancelled: bool = False,
+    ):
+        job = ChannelSyncJob(
+            property_id=property_id,
+            channel_code=channel_code,
+            job_type='reconcile',
+            payload_json={
+                'cursor': cursor or {},
+                'snapshot_complete': snapshot_complete,
+                'queue_acknowledgements': queue_acknowledgements,
+                'mark_missing_as_cancelled': mark_missing_as_cancelled,
+            },
+            status='pending',
+        )
+        db.session.add(job)
+        db.session.commit()

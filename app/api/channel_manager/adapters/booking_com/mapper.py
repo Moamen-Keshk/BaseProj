@@ -4,6 +4,9 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 class BookingComMapper:
     @staticmethod
     def build_ari_xml(connection, ari_updates: list[dict]) -> str:
+        """
+        Builds the XML payload to push Availability, Rates, and Inventory (ARI) updates.
+        """
         root = Element('ARIUpdate')
         hotel_id = str((connection.credentials_json or {}).get('hotel_id', ''))
 
@@ -33,3 +36,49 @@ class BookingComMapper:
                 item_el.set('closed_to_departure', str(update['closed_to_departure']).lower())
 
         return tostring(root, encoding='unicode')
+
+    @staticmethod
+    def build_room_request(connection) -> str:
+        """
+        Builds the XML payload to request configured rooms for the hotel.
+        """
+        credentials = connection.credentials_json or {}
+        hotel_id = credentials.get('hotel_id', '')
+
+        request_elem = Element('request')
+
+        username_elem = SubElement(request_elem, 'username')
+        username_elem.text = credentials.get('username', '')
+
+        password_elem = SubElement(request_elem, 'password')
+        password_elem.text = credentials.get('password', '')
+
+        hotel_elem = SubElement(request_elem, 'hotel')
+        hotel_elem.set('id', str(hotel_id))
+
+        SubElement(request_elem, 'roomtypes')  # Requesting room types
+
+        return tostring(request_elem, encoding='unicode', xml_declaration=True)
+
+    @staticmethod
+    def build_rate_plan_request(connection) -> str:
+        """
+        Builds the XML payload to request configured rate plans for the hotel.
+        """
+        credentials = connection.credentials_json or {}
+        hotel_id = credentials.get('hotel_id', '')
+
+        request_elem = Element('request')
+
+        username_elem = SubElement(request_elem, 'username')
+        username_elem.text = credentials.get('username', '')
+
+        password_elem = SubElement(request_elem, 'password')
+        password_elem.text = credentials.get('password', '')
+
+        hotel_elem = SubElement(request_elem, 'hotel')
+        hotel_elem.set('id', str(hotel_id))
+
+        SubElement(request_elem, 'rateplans')  # Requesting rate plans
+
+        return tostring(request_elem, encoding='unicode', xml_declaration=True)
