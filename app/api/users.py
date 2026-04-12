@@ -1,8 +1,9 @@
 import logging
 from flask import make_response, jsonify, request
+from sqlalchemy import func
 from . import api
 from .. import db
-from app.api.models import User, UserPropertyAccess, Role, Property, PropertyInvite
+from app.api.models import User, UserPropertyAccess, Role, Property, PropertyInvite, PMSPermission
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
 from app.api.constants import Constants
@@ -13,17 +14,54 @@ from app.api.email import send_email
 # HELPER FUNCTIONS
 # ==========================================
 
+
+def normalize_email(email):
+    if not isinstance(email, str):
+        return ''
+    return email.strip().lower()
+
+
+def get_role_rank(role_name):
+    return Constants.RoleHierarchy.get(role_name)
+
+
+def require_role_rank(role_name):
+    rank = get_role_rank(role_name)
+    if rank is None:
+        raise ValueError(f'Role [{role_name}] is not configured in RoleHierarchy.')
+    return rank
+
+
+def get_all_permissions():
+    return [
+        PMSPermission.VIEW_BOOKINGS,
+        PMSPermission.MANAGE_BOOKINGS,
+        PMSPermission.VIEW_RATES,
+        PMSPermission.MANAGE_RATES,
+        PMSPermission.VIEW_FINANCE,
+        PMSPermission.MANAGE_FINANCE,
+        PMSPermission.MANAGE_CHANNELS,
+        PMSPermission.UPDATE_ROOM_STATUS,
+        PMSPermission.MANAGE_STAFF,
+        PMSPermission.MANAGE_PROPERTY,
+    ]
+
 def get_user_rank(user, property_id):
     """
     Returns the numeric rank of the user based on the RoleHierarchy to prevent
     lower-level staff from modifying higher-level staff.
     """
     if user.is_super_admin:
-        return Constants.RoleHierarchy.get('Super Admin', 50)
+        return max(Constants.RoleHierarchy.values(), default=0) + 10
 
     access = UserPropertyAccess.query.filter_by(user_id=user.uid, property_id=property_id).first()
     if access and access.role:
-        return Constants.RoleHierarchy.get(access.role.name, 0)
+        rank = get_role_rank(access.role.name)
+        if rank is None:
+            logging.error("Unknown role [%s] found for user [%s] at property [%s].",
+                          access.role.name, user.uid, property_id)
+            return 0
+        return rank
     return 0
 
 
@@ -39,6 +77,7 @@ def get_user():
 
     try:
         user_uid = get_current_user()
+        property_id = request.args.get('property_id', type=int)
 
         if user_uid:
             user = User.query.get_or_404(user_uid)
@@ -48,17 +87,27 @@ def get_user():
             if user.is_super_admin:
                 user_data['account_status_id'] = 2  # Super Admins are always Active
                 user_data['role_name'] = 'Super Admin'
-                user_data['property_id'] = None
+                user_data['property_id'] = property_id
+                user_data['permissions'] = get_all_permissions()
+                user_data['is_super_admin'] = True
             else:
-                access = UserPropertyAccess.query.filter_by(user_id=user.uid).first()
+                access_query = UserPropertyAccess.query.filter_by(user_id=user.uid)
+                if property_id is not None:
+                    access_query = access_query.filter_by(property_id=property_id)
+                access = access_query.first()
+                if access is None and property_id is not None:
+                    access = UserPropertyAccess.query.filter_by(user_id=user.uid).first()
                 if access:
                     user_data['account_status_id'] = access.account_status_id
                     user_data['role_name'] = access.role.name
                     user_data['property_id'] = access.property_id
+                    user_data['permissions'] = access.role.permissions_json or []
                 else:
                     user_data['account_status_id'] = 1
                     user_data['role_name'] = 'Unassigned'
                     user_data['property_id'] = None
+                    user_data['permissions'] = []
+                user_data['is_super_admin'] = False
 
             return make_response(jsonify({'status': 'success', 'data': user_data})), 200
 
@@ -90,10 +139,10 @@ def get_staff(property_id):
         staff_list = []
         for access in access_records:
             status_name = Constants.AccountStatusCoding.get(access.account_status_id, 'Unknown')
-            target_rank = Constants.RoleHierarchy.get(access.role.name, 0)
+            target_rank = get_role_rank(access.role.name)
 
-            # Can manage only if current user's rank is strictly greater than the target's rank
-            can_manage = current_user_rank > target_rank
+            # Unknown roles fail closed: they remain visible but cannot be managed.
+            can_manage = target_rank is not None and current_user_rank > target_rank
 
             staff_list.append({
                 'user_uid': access.user.uid,
@@ -138,7 +187,7 @@ def assign_staff_role(property_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Invalid Role, User, or Property.'})), 404
 
         current_user_rank = get_user_rank(current_user, property_id)
-        target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
+        target_role_rank = require_role_rank(role.name)
 
         if current_user_rank <= target_role_rank:
             return make_response(
@@ -197,8 +246,8 @@ def update_staff_role(property_id, target_user_uid):
             return make_response(jsonify({'status': 'fail', 'message': 'Invalid role.'})), 400
 
         current_user_rank = get_user_rank(current_user, property_id)
-        old_role_rank = Constants.RoleHierarchy.get(target_access.role.name, 0)
-        new_role_rank = Constants.RoleHierarchy.get(new_role.name, 0)
+        old_role_rank = require_role_rank(target_access.role.name)
+        new_role_rank = require_role_rank(new_role.name)
 
         # Ensure user is high enough to change this person
         if current_user_rank <= old_role_rank:
@@ -239,7 +288,7 @@ def remove_staff(property_id, target_user_uid):
             return make_response(jsonify({'status': 'fail', 'message': 'Target user not found in this property.'})), 404
 
         current_user_rank = get_user_rank(current_user, property_id)
-        target_user_rank = Constants.RoleHierarchy.get(target_access.role.name, 0)
+        target_user_rank = require_role_rank(target_access.role.name)
 
         if current_user_rank <= target_user_rank:
             return make_response(jsonify(
@@ -274,7 +323,7 @@ def update_staff_status(property_id, target_user_uid):
             return make_response(jsonify({'status': 'fail', 'message': 'Target user not found in this property.'})), 404
 
         current_user_rank = get_user_rank(current_user, property_id)
-        target_user_rank = Constants.RoleHierarchy.get(target_access.role.name, 0)
+        target_user_rank = require_role_rank(target_access.role.name)
 
         if current_user_rank <= target_user_rank:
             return make_response(
@@ -350,7 +399,7 @@ def create_invite(property_id):
         current_uid = get_current_user()
         current_user = User.query.get(current_uid)
 
-        email = request.json.get('email')
+        email = normalize_email(request.json.get('email'))
         role_id = request.json.get('role_id')
 
         role = Role.query.get(role_id)
@@ -360,11 +409,34 @@ def create_invite(property_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Email and Role are required.'})), 400
 
         current_user_rank = get_user_rank(current_user, property_id)
-        target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
+        target_role_rank = require_role_rank(role.name)
 
         if current_user_rank <= target_role_rank:
             return make_response(
                 jsonify({'status': 'fail', 'message': 'Forbidden: Cannot invite roles at or above your level.'})), 403
+
+        existing_invite = PropertyInvite.query.filter(
+            PropertyInvite.property_id == property_id,
+            func.lower(PropertyInvite.email) == email,
+            PropertyInvite.is_used.is_(False)
+        ).first()
+        if existing_invite:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'An open invite already exists for this email at the selected property.'
+            })), 400
+
+        existing_user = User.query.filter(func.lower(User.email) == email).first()
+        if existing_user:
+            existing_access = UserPropertyAccess.query.filter_by(
+                user_id=existing_user.uid,
+                property_id=property_id
+            ).first()
+            if existing_access:
+                return make_response(jsonify({
+                    'status': 'fail',
+                    'message': 'This user already has staff access for the selected property.'
+                })), 400
 
         invite = PropertyInvite(property_id=property_id, role_id=role.id, email=email)
         db.session.add(invite)
@@ -407,7 +479,7 @@ def delete_invite(property_id, invite_id):
             return make_response(jsonify({'status': 'fail', 'message': 'Invite not found.'})), 404
 
         current_user_rank = get_user_rank(current_user, property_id)
-        target_role_rank = Constants.RoleHierarchy.get(invite.role.name, 0)
+        target_role_rank = require_role_rank(invite.role.name)
 
         if current_user_rank <= target_role_rank:
             return make_response(
@@ -440,7 +512,11 @@ def get_assignable_roles(property_id):
         assignable_roles = []
 
         for role in all_roles:
-            target_role_rank = Constants.RoleHierarchy.get(role.name, 0)
+            target_role_rank = get_role_rank(role.name)
+            if target_role_rank is None:
+                logging.warning("Skipping unknown role [%s] in assignable roles for property [%s].",
+                                role.name, property_id)
+                continue
             if target_role_rank < current_user_rank:
                 assignable_roles.append({
                     'id': role.id,

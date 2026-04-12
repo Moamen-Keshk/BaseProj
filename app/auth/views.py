@@ -3,6 +3,7 @@ import logging
 
 from flask import make_response, jsonify, redirect, request
 from flask.views import MethodView
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.exceptions import BadRequest
 
@@ -17,6 +18,12 @@ from .. import db
 logger = logging.getLogger(__name__)
 
 
+def normalize_email(email):
+    if not isinstance(email, str):
+        return ''
+    return email.strip().lower()
+
+
 class RegisterAPI(MethodView):
     """
     User Registration Resource
@@ -26,8 +33,9 @@ class RegisterAPI(MethodView):
     def post():
         try:
             post_data = request.get_json()
+            email = normalize_email(post_data.get('email'))
 
-            user = User.query.filter_by(email=post_data.get('email')).first()
+            user = User.query.filter(func.lower(User.email) == email).first()
             if not user:
                 if User.query.filter_by(username=post_data.get('username')).first():
                     response_object = {
@@ -42,7 +50,7 @@ class RegisterAPI(MethodView):
                 user = User(
                     uid=new_uid,
                     username=post_data.get('username'),
-                    email=post_data.get('email'),
+                    email=email,
                     password=post_data.get('password'),
                 )
 
@@ -53,9 +61,8 @@ class RegisterAPI(MethodView):
                 if invite_code:
                     invite = PropertyInvite.query.filter_by(
                         invite_code=invite_code,
-                        email=user.email,
                         is_used=False
-                    ).first()
+                    ).filter(func.lower(PropertyInvite.email) == email).first()
 
                     if invite:
                         # Consume the invite
