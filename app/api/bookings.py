@@ -10,6 +10,7 @@ from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
 from app.api.constants import Constants
+from app.api.payments.services import record_booking_payment, sync_invoice_for_booking
 
 # --- CHANNEL MANAGER IMPORTS ---
 from app.api.channel_manager.models import ChannelReservationLink
@@ -29,6 +30,11 @@ def new_booking(property_id):
     try:
         user_id = get_current_user()  # Still getting this just to mark the creator
         booking_data = request.get_json()
+        auto_check_in = bool(booking_data.get('auto_check_in', False))
+        initial_amount_paid = float(booking_data.get('amount_paid') or 0.0)
+        payment_method = booking_data.get('payment_method') or 'cash'
+        payment_reference = booking_data.get('payment_reference')
+        payment_notes = booking_data.get('payment_notes')
 
         try:
             booking = Booking.from_json(booking_data)
@@ -52,9 +58,31 @@ def new_booking(property_id):
         # Force the property_id from the secured URL to prevent payload tampering
         booking.property_id = property_id
         booking.creator_id = user_id
+        booking.amount_paid = 0.0
 
         assign_nightly_rates(booking)
+        booking.update_payment_status()
         db.session.add(booking)
+        db.session.flush()
+        sync_invoice_for_booking(booking)
+
+        if initial_amount_paid > 0:
+            record_booking_payment(
+                booking=booking,
+                amount=initial_amount_paid,
+                payment_method=payment_method,
+                source='front_desk' if auto_check_in else 'manual',
+                status='succeeded',
+                reference=payment_reference,
+                notes=payment_notes,
+                recorded_by=user_id,
+            )
+
+        if auto_check_in:
+            checked_in_status = db.session.query(BookingStatus).filter_by(code='CHECKED IN').first()
+            if not checked_in_status:
+                raise ValueError('Checked In status not configured in the system.')
+            booking.change_status(checked_in_status.id)
 
         # Apply the housekeeping rule for same-day check-ins
         handle_same_day_checkin_housekeeping(booking)
@@ -192,6 +220,7 @@ def edit_booking(property_id, booking_id):
 
         # Automatically resolve the payment status after any rate or payment changes
         booking.update_payment_status()
+        sync_invoice_for_booking(booking)
 
         handle_same_day_checkin_housekeeping(booking)
 
@@ -518,10 +547,18 @@ def extend_booking(property_id, booking_id):
         # 👉 Step 3: THE NEW FINANCIAL LOGIC
         # If the user checked the box saying "Guest paid the extra amount now"
         if is_paid and extra_cost > 0:
-            booking.amount_paid = float(booking.amount_paid or 0.0) + extra_cost
-
-        # Auto-resolve the status!
-        booking.update_payment_status()
+            record_booking_payment(
+                booking=booking,
+                amount=extra_cost,
+                payment_method='cash',
+                source='extension',
+                status='succeeded',
+                reference='BOOKING_EXTENSION',
+                notes='Payment captured during booking extension.',
+            )
+        else:
+            booking.update_payment_status()
+            sync_invoice_for_booking(booking)
 
         db.session.commit()
 

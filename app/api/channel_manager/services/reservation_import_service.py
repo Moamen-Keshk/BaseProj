@@ -6,6 +6,7 @@ from flask_socketio import SocketIO
 
 # 👉 IMPORT THE VCC MODEL AND ENCRYPTION UTILITY
 from app.api.payments.models import BookingVCC
+from app.api.payments.services import sync_invoice_for_booking
 from app.api.payments.utils import encrypt_data
 
 
@@ -114,6 +115,8 @@ class ReservationImportService:
                             )
                             db.session.add(new_vcc)
 
+                booking.update_payment_status()
+                sync_invoice_for_booking(booking)
                 db.session.commit()
 
                 from app.api.channel_manager.services.pms_sync import queue_booking_ari_sync
@@ -179,6 +182,9 @@ class ReservationImportService:
 
             except Exception as e:
                 print(f"Failed to encrypt and save OTA VCC: {e}")
+
+        booking.update_payment_status()
+        sync_invoice_for_booking(booking)
 
         # Create the OTA Link
         link = ChannelReservationLink(

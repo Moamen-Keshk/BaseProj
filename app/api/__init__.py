@@ -10,6 +10,7 @@ from . import (
     common,
     floors,
     bookings,
+    invoices,
     rooms,
     properties,
     categories,

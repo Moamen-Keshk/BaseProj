@@ -1,74 +1,117 @@
-from app.api.models import Room, RoomOnline, RatePlan, Season
 from datetime import timedelta
-from app import db
 
-def generate_or_update_room_online_for_rate_plan(rate_plan):
-    rooms = Room.query.filter_by(
-        property_id=rate_plan.property_id,
-        category_id=rate_plan.category_id
+from app import db
+from app.api.models import Room, RoomOnline, RatePlan
+from app.api.utils.pricing_engine import calculate_nightly_rate, get_seasons_for_property
+
+
+def _date_range(start_date, end_date):
+    current = start_date
+    while current <= end_date:
+        yield current
+        current += timedelta(days=1)
+
+
+def _candidate_rate_plans(property_id, category_id, target_date):
+    return RatePlan.query.filter_by(
+        property_id=property_id,
+        category_id=category_id,
+        is_active=True,
+    ).filter(
+        RatePlan.start_date <= target_date,
+        RatePlan.end_date >= target_date,
     ).all()
 
-    seasons = Season.query.filter_by(property_id=rate_plan.property_id).all()
 
-    date = rate_plan.start_date
-    while date <= rate_plan.end_date:
+def _choose_effective_rate_plan(candidate_rate_plans, target_date, seasons):
+    priced_candidates = []
+    for rate_plan in candidate_rate_plans:
+        nightly_rate = calculate_nightly_rate(
+            rate_plan=rate_plan,
+            target_date=target_date,
+            stay_length=1,
+            adults=rate_plan.included_occupancy or 2,
+            children=0,
+            seasons=seasons,
+        )
+        priced_candidates.append((nightly_rate, rate_plan.id, rate_plan))
+
+    if not priced_candidates:
+        return None, None
+
+    priced_candidates.sort(key=lambda item: (item[0], item[1]))
+    chosen_rate, _, chosen_plan = priced_candidates[0]
+    return chosen_plan, chosen_rate
+
+
+def rebuild_room_online_for_category_range(property_id, category_id, start_date, end_date):
+    rooms = Room.query.filter_by(
+        property_id=property_id,
+        category_id=category_id,
+    ).all()
+    seasons = get_seasons_for_property(property_id)
+
+    for target_date in _date_range(start_date, end_date):
+        candidate_rate_plans = _candidate_rate_plans(property_id, category_id, target_date)
+        chosen_plan, chosen_rate = _choose_effective_rate_plan(candidate_rate_plans, target_date, seasons)
+
         for room in rooms:
-            # Determine base rate
-            is_weekend = date.weekday() in [5, 6]
-            base_price = rate_plan.weekend_rate if is_weekend and rate_plan.weekend_rate else rate_plan.base_rate
+            room_online = RoomOnline.query.filter_by(room_id=room.id, date=target_date).first()
 
-            # Check if date is in any season
-            in_season = any(season.start_date <= date <= season.end_date for season in seasons)
-            if in_season and rate_plan.seasonal_multiplier:
-                base_price *= rate_plan.seasonal_multiplier
+            if room_online and room_online.rate_plan_id is None:
+                continue
 
-            # Upsert RoomOnline
-            room_online = RoomOnline.query.filter_by(room_id=room.id, date=date).first()
-            if room_online:
-                room_online.price = base_price
-            else:
+            if chosen_plan is None:
+                if room_online is not None:
+                    db.session.delete(room_online)
+                continue
+
+            if room_online is None:
                 room_online = RoomOnline(
                     room_id=room.id,
-                    property_id=rate_plan.property_id,
-                    category_id=rate_plan.category_id,
-                    date=date,
-                    price=base_price
+                    property_id=property_id,
+                    category_id=category_id,
+                    rate_plan_id=chosen_plan.id,
+                    date=target_date,
+                    price=chosen_rate,
                 )
                 db.session.add(room_online)
-        date += timedelta(days=1)
+            else:
+                room_online.property_id = property_id
+                room_online.category_id = category_id
+                room_online.rate_plan_id = chosen_plan.id
+                room_online.price = chosen_rate
 
     db.session.commit()
 
+
+def rebuild_room_online_for_property_range(property_id, start_date, end_date):
+    category_ids = {
+        room.category_id
+        for room in Room.query.filter_by(property_id=property_id).all()
+    }
+
+    for category_id in category_ids:
+        rebuild_room_online_for_category_range(
+            property_id=property_id,
+            category_id=category_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+
+def generate_or_update_room_online_for_rate_plan(rate_plan):
+    rebuild_room_online_for_category_range(
+        property_id=rate_plan.property_id,
+        category_id=rate_plan.category_id,
+        start_date=rate_plan.start_date,
+        end_date=rate_plan.end_date,
+    )
 
 
 def update_room_online_for_season(season):
-    room_rates = RoomOnline.query.filter(
-        RoomOnline.property_id == season.property_id,
-        RoomOnline.date >= season.start_date,
-        RoomOnline.date <= season.end_date
-    ).all()
-
-    for ro in room_rates:
-        rate_plan = RatePlan.query.filter_by(
-            property_id=ro.property_id,
-            category_id=ro.category_id
-        ).filter(
-            RatePlan.start_date <= ro.date,
-            RatePlan.end_date >= ro.date,
-            RatePlan.is_active == True
-        ).first()
-
-        if rate_plan:
-            is_weekend = ro.date.weekday() in [5, 6]
-            base_price = rate_plan.weekend_rate if is_weekend and rate_plan.weekend_rate else rate_plan.base_rate
-
-            # Only apply seasonal multiplier if this date is still in a valid season
-            if rate_plan.seasonal_multiplier:
-                in_season = season.start_date <= ro.date <= season.end_date
-                if in_season:
-                    base_price *= rate_plan.seasonal_multiplier
-
-            ro.price = base_price
-
-    db.session.commit()
-
+    rebuild_room_online_for_property_range(
+        property_id=season.property_id,
+        start_date=season.start_date,
+        end_date=season.end_date,
+    )

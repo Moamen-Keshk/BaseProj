@@ -30,6 +30,8 @@ class PMSPermission:
     MANAGE_BOOKINGS = 'manage_bookings'
     VIEW_RATES = 'view_rates'
     MANAGE_RATES = 'manage_rates'
+    VIEW_FINANCE = 'view_finance'
+    MANAGE_FINANCE = 'manage_finance'
     MANAGE_CHANNELS = 'manage_channels'
     UPDATE_ROOM_STATUS = 'update_room_status'
     MANAGE_STAFF = 'manage_staff'
@@ -52,6 +54,7 @@ class Role(db.Model):
                 'perms': [
                     PMSPermission.VIEW_BOOKINGS, PMSPermission.MANAGE_BOOKINGS,
                     PMSPermission.VIEW_RATES, PMSPermission.MANAGE_RATES,
+                    PMSPermission.VIEW_FINANCE, PMSPermission.MANAGE_FINANCE,
                     PMSPermission.MANAGE_CHANNELS, PMSPermission.UPDATE_ROOM_STATUS,
                     PMSPermission.MANAGE_STAFF, PMSPermission.MANAGE_PROPERTY
                 ]
@@ -60,6 +63,7 @@ class Role(db.Model):
                 'desc': 'Manages rates, channels, and availability',
                 'perms': [
                     PMSPermission.VIEW_BOOKINGS, PMSPermission.VIEW_RATES,
+                    PMSPermission.VIEW_FINANCE,
                     PMSPermission.MANAGE_RATES, PMSPermission.MANAGE_CHANNELS,
                     PMSPermission.MANAGE_STAFF  # <--- ADDED
                 ]
@@ -68,7 +72,8 @@ class Role(db.Model):
                 'desc': 'Manages daily bookings and room statuses',
                 'perms': [
                     PMSPermission.VIEW_BOOKINGS, PMSPermission.MANAGE_BOOKINGS,
-                    PMSPermission.VIEW_RATES, PMSPermission.UPDATE_ROOM_STATUS,
+                    PMSPermission.VIEW_RATES, PMSPermission.VIEW_FINANCE,
+                    PMSPermission.MANAGE_FINANCE, PMSPermission.UPDATE_ROOM_STATUS,
                     PMSPermission.MANAGE_STAFF  # <--- ADDED
                 ]
             },
@@ -750,6 +755,7 @@ class Booking(db.Model):
             self.payment_status_id = pending_status.id if pending_status else self.payment_status_id
 
     def to_json(self):
+        invoice = getattr(self, 'invoice', None)
         return {
             'id': self.id,
             'confirmation_number': self.confirmation_number,
@@ -779,6 +785,9 @@ class Booking(db.Model):
             'property_id': self.property_id,
             'room_id': self.room_id,
             'creator_id': self.creator_id,
+            'invoice_id': invoice.id if invoice else None,
+            'invoice_number': invoice.invoice_number if invoice else None,
+            'invoice_status': invoice.status if invoice else None,
             'booking_rates': [br.to_json() for br in self.booking_rates]
         }
 
@@ -908,6 +917,22 @@ class RatePlan(db.Model):
     end_date = db.Column(db.Date, nullable=False)
     weekend_rate = db.Column(db.Float, nullable=True)
     seasonal_multiplier = db.Column(db.Float, nullable=True)
+    pricing_type = db.Column(db.String(32), nullable=False, default='standard')
+    parent_rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=True)
+    derived_adjustment_type = db.Column(db.String(16), nullable=True)
+    derived_adjustment_value = db.Column(db.Float, nullable=True)
+    included_occupancy = db.Column(db.Integer, nullable=True)
+    single_occupancy_rate = db.Column(db.Float, nullable=True)
+    extra_adult_rate = db.Column(db.Float, nullable=True)
+    extra_child_rate = db.Column(db.Float, nullable=True)
+    min_los = db.Column(db.Integer, nullable=True)
+    max_los = db.Column(db.Integer, nullable=True)
+    closed = db.Column(db.Boolean, nullable=False, default=False)
+    closed_to_arrival = db.Column(db.Boolean, nullable=False, default=False)
+    closed_to_departure = db.Column(db.Boolean, nullable=False, default=False)
+    meal_plan_code = db.Column(db.String(32), nullable=True)
+    cancellation_policy = db.Column(db.String(128), nullable=True)
+    los_pricing = db.Column(db.JSON, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
 
     def __init__(self, **kwargs):
@@ -924,6 +949,22 @@ class RatePlan(db.Model):
             'end_date': self.end_date.isoformat() if self.end_date else None,
             'weekend_rate': self.weekend_rate,
             'seasonal_multiplier': self.seasonal_multiplier,
+            'pricing_type': self.pricing_type,
+            'parent_rate_plan_id': self.parent_rate_plan_id,
+            'derived_adjustment_type': self.derived_adjustment_type,
+            'derived_adjustment_value': self.derived_adjustment_value,
+            'included_occupancy': self.included_occupancy,
+            'single_occupancy_rate': self.single_occupancy_rate,
+            'extra_adult_rate': self.extra_adult_rate,
+            'extra_child_rate': self.extra_child_rate,
+            'min_los': self.min_los,
+            'max_los': self.max_los,
+            'closed': self.closed,
+            'closed_to_arrival': self.closed_to_arrival,
+            'closed_to_departure': self.closed_to_departure,
+            'meal_plan_code': self.meal_plan_code,
+            'cancellation_policy': self.cancellation_policy,
+            'los_pricing': self.los_pricing or [],
             'is_active': self.is_active,
         }
 
@@ -937,6 +978,22 @@ class RatePlan(db.Model):
         end_date = datetime.fromisoformat(json_data.get('end_date')).date()
         weekend_rate = json_data.get('weekend_rate')
         seasonal_multiplier = json_data.get('seasonal_multiplier')
+        pricing_type = json_data.get('pricing_type') or 'standard'
+        parent_rate_plan_id = json_data.get('parent_rate_plan_id')
+        derived_adjustment_type = json_data.get('derived_adjustment_type')
+        derived_adjustment_value = json_data.get('derived_adjustment_value')
+        included_occupancy = json_data.get('included_occupancy')
+        single_occupancy_rate = json_data.get('single_occupancy_rate')
+        extra_adult_rate = json_data.get('extra_adult_rate')
+        extra_child_rate = json_data.get('extra_child_rate')
+        min_los = json_data.get('min_los')
+        max_los = json_data.get('max_los')
+        closed = json_data.get('closed', False)
+        closed_to_arrival = json_data.get('closed_to_arrival', False)
+        closed_to_departure = json_data.get('closed_to_departure', False)
+        meal_plan_code = json_data.get('meal_plan_code')
+        cancellation_policy = json_data.get('cancellation_policy')
+        los_pricing = json_data.get('los_pricing') or []
         is_active = json_data.get('is_active', True)
 
         return RatePlan(
@@ -948,6 +1005,22 @@ class RatePlan(db.Model):
             end_date=end_date,
             weekend_rate=weekend_rate,
             seasonal_multiplier=seasonal_multiplier,
+            pricing_type=pricing_type,
+            parent_rate_plan_id=parent_rate_plan_id,
+            derived_adjustment_type=derived_adjustment_type,
+            derived_adjustment_value=derived_adjustment_value,
+            included_occupancy=included_occupancy,
+            single_occupancy_rate=single_occupancy_rate,
+            extra_adult_rate=extra_adult_rate,
+            extra_child_rate=extra_child_rate,
+            min_los=min_los,
+            max_los=max_los,
+            closed=closed,
+            closed_to_arrival=closed_to_arrival,
+            closed_to_departure=closed_to_departure,
+            meal_plan_code=meal_plan_code,
+            cancellation_policy=cancellation_policy,
+            los_pricing=los_pricing,
             is_active=is_active
         )
 
@@ -995,6 +1068,7 @@ class RoomOnline(db.Model):
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False)
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=True)
     date = db.Column(db.Date, nullable=False)
     price = db.Column(db.Float, nullable=False)
     room_status_id = db.Column(db.Integer, db.ForeignKey('room_status.id'), nullable=False, default=1)
@@ -1008,6 +1082,7 @@ class RoomOnline(db.Model):
             'room_id': self.room_id,
             'property_id': self.property_id,
             'category_id': self.category_id,  # ✅ Include in output
+            'rate_plan_id': self.rate_plan_id,
             'date': self.date.isoformat(),
             'price': self.price,
             'room_status_id': self.room_status_id
@@ -1019,6 +1094,7 @@ class RoomOnline(db.Model):
             room_id=json_data.get('room_id'),
             property_id=json_data.get('property_id'),
             category_id=json_data.get('category_id'),  # ✅ Parse input
+            rate_plan_id=json_data.get('rate_plan_id'),
             date=datetime.fromisoformat(json_data.get('date')).date(),
             price=json_data.get('price')
         )

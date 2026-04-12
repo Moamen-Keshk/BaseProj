@@ -1,16 +1,30 @@
 import logging
+from datetime import datetime
 from types import SimpleNamespace
 from flask import request, make_response, jsonify
 
 from . import api
-from app.api.models import Season, RatePlan, RoomOnline
+from app.api.models import Season
 from .. import db
 from app.api.decorators import require_permission
 from app.api.utils.room_online_generator import update_room_online_for_season
+from app.api.utils.rate_plan_rules import get_overlapping_seasons
 from app.api.channel_manager.services.pms_sync import (
     queue_season_ari_sync,
     queue_season_transition_ari_sync,
 )
+
+
+def _season_conflict_payload(seasons):
+    return [
+        {
+            'id': season.id,
+            'label': season.label,
+            'start_date': season.start_date.isoformat() if season.start_date else None,
+            'end_date': season.end_date.isoformat() if season.end_date else None,
+        }
+        for season in seasons
+    ]
 
 
 @api.route('/properties/<int:property_id>/seasons', methods=['POST', 'OPTIONS'], strict_slashes=False)
@@ -26,6 +40,27 @@ def new_season(property_id):
         season_data['property_id'] = property_id
 
         season = Season.from_json(season_data)
+        start_date = season.start_date
+        end_date = season.end_date
+
+        if start_date > end_date:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Start date cannot be after end date.'
+            })), 400
+
+        overlapping = get_overlapping_seasons(
+            property_id=property_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if overlapping:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Season dates overlap an existing season.',
+                'conflicts': _season_conflict_payload(overlapping),
+            })), 409
+
         db.session.add(season)
         db.session.commit()
 
@@ -71,12 +106,39 @@ def update_season(property_id, season_id):
         old_start_date = season.start_date
         old_end_date = season.end_date
 
-        if 'rate_plan_id' in data:
-            season.rate_plan_id = data['rate_plan_id']
-        if 'start_date' in data:
-            season.start_date = data['start_date']
-        if 'end_date' in data:
-            season.end_date = data['end_date']
+        new_start_date = data.get('start_date')
+        if new_start_date is not None:
+            new_start_date = datetime.fromisoformat(new_start_date).date()
+        else:
+            new_start_date = season.start_date
+
+        new_end_date = data.get('end_date')
+        if new_end_date is not None:
+            new_end_date = datetime.fromisoformat(new_end_date).date()
+        else:
+            new_end_date = season.end_date
+
+        if new_start_date > new_end_date:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Start date cannot be after end date.'
+            })), 400
+
+        overlapping = get_overlapping_seasons(
+            property_id=property_id,
+            start_date=new_start_date,
+            end_date=new_end_date,
+            exclude_season_id=season.id,
+        )
+        if overlapping:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Season dates overlap an existing season.',
+                'conflicts': _season_conflict_payload(overlapping),
+            })), 409
+
+        season.start_date = new_start_date
+        season.end_date = new_end_date
         if 'label' in data:
             season.label = data['label']
 
@@ -155,29 +217,11 @@ def delete_season(property_id, season_id):
         db.session.delete(season)
         db.session.flush()  # Don't commit yet
 
-        # Recalculate room_online prices for affected entries
-        affected_room_online = RoomOnline.query.filter(
-            RoomOnline.property_id == property_id_stored,
-            RoomOnline.date >= start_date,
-            RoomOnline.date <= end_date
-        ).all()
-
-        for entry in affected_room_online:
-            matching_plan = RatePlan.query.filter(
-                RatePlan.property_id == entry.property_id,
-                RatePlan.category_id == entry.category_id,
-                RatePlan.start_date <= entry.date,
-                RatePlan.end_date >= entry.date
-            ).first()
-
-            if matching_plan:
-                is_weekend = entry.date.weekday() in [5, 6]
-                new_price = (
-                    matching_plan.weekend_rate
-                    if is_weekend and matching_plan.weekend_rate is not None
-                    else matching_plan.base_rate
-                )
-                entry.price = new_price
+        update_room_online_for_season(SimpleNamespace(
+            property_id=property_id_stored,
+            start_date=start_date,
+            end_date=end_date,
+        ))
 
         db.session.commit()
 

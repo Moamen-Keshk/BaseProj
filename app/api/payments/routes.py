@@ -1,56 +1,47 @@
-from decimal import InvalidOperation
-
 import stripe
 from flask import request, jsonify, current_app
 from sqlalchemy.exc import SQLAlchemyError
-from app.api.models import db, Booking
+
+from app import db
 from app.api.decorators import require_auth
-from app.api.payments.models import Transaction, BookingVCC
+from app.api.models import Booking
+from app.api.payments.models import BookingVCC, Transaction
+from app.api.payments.services import (
+    create_payment_intent_for_booking,
+    mark_transaction_failed,
+    mark_transaction_succeeded,
+)
 from . import payments_bp
 from .utils import decrypt_data
+
 
 @payments_bp.route('/create-payment-intent', methods=['POST'])
 @require_auth
 def create_payment_intent():
-    stripe.api_key = current_app.config['STRIPE_SECRET_KEY']
     data = request.json
 
     booking_id = data.get('booking_id')
-    amount = data.get('amount')  # Ensure this is passed securely or calculated from DB
+    amount = data.get('amount')
     is_ota_vcc = data.get('is_vcc', False)
 
     booking = Booking.query.get_or_404(booking_id)
 
     try:
-        # Stripe requires amount in cents (e.g., $50.00 = 5000)
-        amount_in_cents = int(float(amount) * 100)
-
-        # Create a PaymentIntent with the order amount and currency
-        intent = stripe.PaymentIntent.create(
-            amount=amount_in_cents,
-            currency='usd',
-            metadata={'booking_id': booking.id, 'is_vcc': is_ota_vcc},
-            # If it's a VCC, you might want to save the card details to charge later
-            # based on the OTA activation date (e.g., setup_future_usage)
-            setup_future_usage='off_session' if is_ota_vcc else None
-        )
-
-        # Log to database
-        txn = Transaction(
-            booking_id=booking.id,
-            stripe_payment_intent_id=intent.id,
+        intent, txn, _invoice = create_payment_intent_for_booking(
+            booking=booking,
             amount=amount,
-            is_vcc=is_ota_vcc
+            currency=data.get('currency', 'usd'),
+            is_vcc=is_ota_vcc,
         )
-        db.session.add(txn)
-        db.session.commit()
 
         return jsonify({
             'clientSecret': intent.client_secret,
             'paymentIntentId': intent.id
         })
-    except (TypeError, ValueError, InvalidOperation) as exc:
+    except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 503
     except stripe.error.StripeError as exc:
         return jsonify(error=str(exc)), 403
     except SQLAlchemyError as exc:
@@ -77,40 +68,34 @@ def stripe_webhook():
         # Update DB
         txn = Transaction.query.filter_by(stripe_payment_intent_id=payment_intent['id']).first()
         if txn:
-            txn.status = 'succeeded'
-            # Here you would also update the overall Booking payment status to 'paid'
+            mark_transaction_succeeded(txn)
             db.session.commit()
 
     elif event['type'] == 'payment_intent.payment_failed':
         payment_intent = event['data']['object']
         txn = Transaction.query.filter_by(stripe_payment_intent_id=payment_intent['id']).first()
         if txn:
-            txn.status = 'failed'
+            mark_transaction_failed(txn)
             db.session.commit()
 
     return jsonify(success=True), 200
 
 
-# 👇 USE YOUR APP'S ACTUAL AUTH DECORATOR
-from app.api.decorators import require_auth
-
-
 @payments_bp.route('/vcc/<int:booking_id>', methods=['GET'])
-@require_auth  # 👇 SECURE IT WITH YOUR DECORATOR
+@require_auth
 def get_vcc_details(booking_id):
     vcc_record = BookingVCC.query.filter_by(booking_id=booking_id).first()
 
     if not vcc_record:
         return jsonify({"has_vcc": False}), 200
 
-    # Decrypt only at the moment of request
-    card_number = decrypt_data(vcc_record.encrypted_card_number)
-    cvc = decrypt_data(vcc_record.encrypted_cvc)
-
-    return jsonify({
-        "has_vcc": True,
-        "card_number": card_number,
-        "exp_month": vcc_record.exp_month,
-        "exp_year": vcc_record.exp_year,
-        "cvc": cvc
-    }), 200
+    try:
+        return jsonify({
+            "has_vcc": True,
+            "card_number": decrypt_data(vcc_record.encrypted_card_number),
+            "exp_month": vcc_record.exp_month,
+            "exp_year": vcc_record.exp_year,
+            "cvc": decrypt_data(vcc_record.encrypted_cvc)
+        }), 200
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 503

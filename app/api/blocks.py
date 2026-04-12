@@ -13,6 +13,7 @@ from app.api.channel_manager.services.pms_sync import (
     queue_block_ari_sync,
     queue_block_transition_ari_sync,
 )
+from app.api.utils.pricing_engine import calculate_nightly_rate
 
 
 def parse_date(value):
@@ -226,6 +227,10 @@ def update_room_online_for_block(block):
         ).first()
 
         if not room_online:
+            matching_plan = next(
+                (rp for rp in rate_plans if rp.start_date <= current_date <= rp.end_date),
+                None,
+            )
             price = resolve_price_for_block(
                 room_date=current_date,
                 rate_plans=rate_plans,
@@ -236,6 +241,7 @@ def update_room_online_for_block(block):
                 room_id=block.room_id,
                 property_id=block.property_id,
                 category_id=room.category_id,
+                rate_plan_id=matching_plan.id if matching_plan else None,
                 date=current_date,
                 price=price,
                 room_status_id=Constants.RoomStatusCoding['Blocked'],
@@ -252,14 +258,14 @@ def resolve_price_for_block(room_date, rate_plans, seasons):
     if not plan:
         return 0.0
 
-    is_weekend = room_date.weekday() in [5, 6]
-    base_price = plan.weekend_rate if is_weekend and plan.weekend_rate else plan.base_rate
-
-    in_season = any(season.start_date <= room_date <= season.end_date for season in seasons)
-    if in_season and plan.seasonal_multiplier:
-        base_price *= plan.seasonal_multiplier
-
-    return base_price
+    return calculate_nightly_rate(
+        rate_plan=plan,
+        target_date=room_date,
+        stay_length=1,
+        adults=plan.included_occupancy or 2,
+        children=0,
+        seasons=seasons,
+    )
 
 
 def remove_blocked_status_for_block(block):

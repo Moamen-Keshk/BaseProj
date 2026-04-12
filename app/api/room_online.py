@@ -103,6 +103,8 @@ def update_room_online(property_id, rate_id):
             room_online.room_id = data['room_id']
         if 'room_status_id' in data:
             room_online.room_status_id = data['room_status_id']
+        if any(field in data for field in ('price', 'date', 'category_id', 'room_id')):
+            room_online.rate_plan_id = None
 
         db.session.commit()
 
