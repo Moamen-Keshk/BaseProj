@@ -113,7 +113,7 @@ class Transaction(db.Model):
     currency = db.Column(db.String(3), default='usd')
     status = db.Column(db.String(50), default='pending')  # pending, succeeded, failed
     transaction_type = db.Column(db.String(32), default='payment')
-    parent_transaction_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=True)
+    parent_transaction_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=True, index=True)
     payment_method = db.Column(db.String(32), default='card')
     source = db.Column(db.String(32), default='manual')
     external_channel = db.Column(db.String(32), nullable=True)
