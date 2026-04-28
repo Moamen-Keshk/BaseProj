@@ -2,6 +2,8 @@ from app.api.email import send_email
 from app.celery_app import celery
 from app import db
 from app.api.models import Booking, Property, GuestMessage
+from app.api.invoice_rendering import build_invoice_template_context
+from app.api.payments.services import sync_invoice_for_booking
 from app.api.utils.notifications import notify_guest_message_failed
 import os
 from twilio.rest import Client
@@ -49,6 +51,38 @@ def send_guest_message(message_id, email, subject, message_body, property_id, fi
             first_name=first_name,
             last_name=last_name,
             message_body=message_body
+        )
+        _update_message_status(message_id, 'sent')
+    except Exception as exc:
+        _update_message_status(message_id, 'failed', str(exc))
+        raise
+
+
+@celery.task
+def send_invoice_email_task(message_id, booking_id, property_id, recipient_email, subject, custom_message=None):
+    booking = Booking.query.get(booking_id)
+    property_obj = Property.query.get(property_id)
+
+    if not booking or not recipient_email:
+        _update_message_status(message_id, 'failed', 'Booking or recipient email not found.')
+        return "Booking or recipient email not found."
+
+    invoice = getattr(booking, 'invoice', None)
+    if invoice is None:
+        invoice = sync_invoice_for_booking(booking)
+        db.session.commit()
+
+    try:
+        send_email(
+            to=recipient_email,
+            subject=subject,
+            template="mail/invoice_email",
+            **build_invoice_template_context(
+                booking,
+                invoice,
+                property_obj=property_obj,
+                custom_message=custom_message,
+            ),
         )
         _update_message_status(message_id, 'sent')
     except Exception as exc:

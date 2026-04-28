@@ -12,7 +12,12 @@ from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
 from app.api.constants import Constants
 from app.api.payments.services import record_booking_payment, sync_invoice_for_booking
-from app.api.utils.housekeeping_logic import apply_room_cleaning_status
+from app.api.utils.housekeeping_logic import (
+    ACTIVE_BOOKING_STATUS_IDS,
+    REFRESH_STATUS_ID,
+    should_auto_refresh_for_arrival,
+    apply_room_cleaning_status,
+)
 
 # --- CHANNEL MANAGER IMPORTS ---
 from app.api.channel_manager.models import ChannelReservationLink
@@ -952,40 +957,42 @@ from app.api.models import User
 
 def handle_same_day_checkin_housekeeping(booking):
     """
-    Automatically updates room cleaning status from 'Clean' to 'Refresh'
+    Automatically updates room cleaning status from a stay-ready state to 'Refresh'
     if a booking is created/edited for a same-day check-in, provided
     no other booking checks out of that room today.
     """
     today = datetime.today().date()
 
+    if booking.status_id not in ACTIVE_BOOKING_STATUS_IDS:
+        return
+
     # 1. Check if the check-in is scheduled for today
     if booking.check_in == today:
         room = db.session.query(Room).filter_by(id=booking.room_id).first()
+        if room is None:
+            return
 
-        clean_status_id = Constants.RoomCleaningStatusCoding.get('Clean')
-        refresh_status_id = Constants.RoomCleaningStatusCoding.get('Refresh')
+        # 2. Verify no other active booking is checking out today from this room.
+        checkout_today = db.session.query(Booking).filter(
+            Booking.room_id == booking.room_id,
+            Booking.check_out == today,
+            Booking.id != booking.id,
+            Booking.status_id.in_(list(ACTIVE_BOOKING_STATUS_IDS)),
+        ).first()
 
-        # 2. Check if the room is currently clean
-        if room and room.cleaning_status_id == clean_status_id:
-
-            # 3. Verify no other booking is checking out today
-            checkout_today = db.session.query(Booking).filter(
-                Booking.room_id == booking.room_id,
-                Booking.check_out == today,
-                Booking.id != booking.id,  # Exclude the current booking
-                Booking.status_id != 5  # 5 = Canceled (exclude canceled bookings)
-            ).first()
-
-            if not checkout_today:
-                user = db.session.query(User).filter_by(uid=booking.creator_id).first()
-                user_name = user.username if user else "System Auto-Refresh"
-                apply_room_cleaning_status(
-                    room,
-                    booking.property_id,
-                    refresh_status_id,
-                    user_name,
-                    allow_system=True,
-                )
+        if should_auto_refresh_for_arrival(
+            room.cleaning_status_id,
+            has_checkout_today=checkout_today is not None,
+        ):
+            user = db.session.query(User).filter_by(uid=booking.creator_id).first()
+            user_name = user.username if user else "System Auto-Refresh"
+            apply_room_cleaning_status(
+                room,
+                booking.property_id,
+                REFRESH_STATUS_ID,
+                user_name,
+                allow_system=True,
+            )
 
 def check_room_availability(room_id, check_in, check_out, exclude_booking_id=None):
     """

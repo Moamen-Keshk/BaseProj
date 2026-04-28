@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Invoice {{ invoice.invoice_number }}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #14213d;
+        --muted: #5c677d;
+        --line: #d9dee8;
+        --panel: #f6f8fb;
+        --accent: #d97706;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--ink);
+        background: #eef2f7;
+      }
+
+      .sheet {
+        width: min(960px, 100%);
+        margin: 0 auto;
+        background: #fff;
+        padding: 32px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 28px;
+      }
+
+      .brand h1,
+      .brand h2,
+      .section-title,
+      .totals-label {
+        margin: 0;
+      }
+
+      .brand h1 {
+        font-size: 30px;
+        letter-spacing: 0.08em;
+      }
+
+      .brand h2 {
+        margin-top: 8px;
+        font-size: 20px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .meta-grid,
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-bottom: 28px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+        background: var(--panel);
+      }
+
+      .section-title {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 10px;
+      }
+
+      .meta-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 4px 0;
+      }
+
+      .meta-row strong {
+        font-weight: 600;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 24px;
+      }
+
+      thead th {
+        text-align: left;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+      }
+
+      tbody td {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+        vertical-align: top;
+      }
+
+      .amount {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .totals {
+        margin-left: auto;
+        width: min(320px, 100%);
+      }
+
+      .totals-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .totals-row.balance {
+        font-size: 18px;
+        font-weight: 700;
+        border-bottom: 0;
+      }
+
+      .notes {
+        margin-top: 20px;
+        padding: 18px;
+        border-radius: 14px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+      }
+
+      .footer {
+        margin-top: 28px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .sheet {
+          padding: 0;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .sheet {
+          padding: 20px;
+        }
+
+        .header,
+        .meta-grid,
+        .summary-grid {
+          grid-template-columns: 1fr;
+          display: grid;
+        }
+
+        .header {
+          gap: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <section class="header">
+        <div class="brand">
+          <h1>INVOICE</h1>
+          <h2>{{ property.name or 'Property' }}</h2>
+          {% if property.address %}
+          <div class="muted">{{ property.address }}</div>
+          {% endif %}
+          {% if property.phone_number or property.email %}
+          <div class="muted">
+            {{ property.phone_number or '' }}
+            {% if property.phone_number and property.email %} · {% endif %}
+            {{ property.email or '' }}
+          </div>
+          {% endif %}
+        </div>
+        <div class="card">
+          <div class="section-title">Invoice Details</div>
+          <div class="meta-row"><span>Invoice #</span><strong>{{ invoice.invoice_number }}</strong></div>
+          <div class="meta-row"><span>Status</span><strong>{{ invoice.status.replace('_', ' ').title() }}</strong></div>
+          <div class="meta-row"><span>Issued</span><strong>{{ invoice.issue_date.strftime('%b %d, %Y') if invoice.issue_date else '-' }}</strong></div>
+          <div class="meta-row"><span>Due</span><strong>{{ invoice.due_date.strftime('%b %d, %Y') if invoice.due_date else '-' }}</strong></div>
+        </div>
+      </section>
+
+      <section class="meta-grid">
+        <div class="card">
+          <div class="section-title">Bill To</div>
+          <div><strong>{{ guest_name }}</strong></div>
+          {% if booking.email %}
+          <div class="muted">{{ booking.email }}</div>
+          {% endif %}
+          {% if booking.phone %}
+          <div class="muted">{{ booking.phone }}</div>
+          {% endif %}
+        </div>
+        <div class="card">
+          <div class="section-title">Stay Summary</div>
+          <div class="meta-row"><span>Confirmation</span><strong>#{{ booking.confirmation_number }}</strong></div>
+          <div class="meta-row"><span>Check-in</span><strong>{{ booking.check_in.strftime('%b %d, %Y') if booking.check_in else '-' }}</strong></div>
+          <div class="meta-row"><span>Check-out</span><strong>{{ booking.check_out.strftime('%b %d, %Y') if booking.check_out else '-' }}</strong></div>
+          <div class="meta-row"><span>Nights</span><strong>{{ stay_nights }}</strong></div>
+        </div>
+      </section>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Date</th>
+            <th class="amount">Qty</th>
+            <th class="amount">Unit Price</th>
+            <th class="amount">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in invoice.line_items %}
+          <tr>
+            <td>{{ item.description }}</td>
+            <td>{{ item.line_date.strftime('%b %d, %Y') if item.line_date else '-' }}</td>
+            <td class="amount">{{ '%.2f'|format(item.quantity or 0) }}</td>
+            <td class="amount">{{ format_money(item.unit_price) }}</td>
+            <td class="amount">{{ format_money(item.amount) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5">No line items are available for this invoice.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <section class="totals">
+        <div class="totals-row"><span class="totals-label">Subtotal</span><strong>{{ format_money(invoice.subtotal) }}</strong></div>
+        <div class="totals-row"><span class="totals-label">Tax</span><strong>{{ format_money(invoice.tax_amount) }}</strong></div>
+        <div class="totals-row"><span class="totals-label">Paid</span><strong>{{ format_money(invoice.amount_paid) }}</strong></div>
+        <div class="totals-row balance"><span class="totals-label">Balance Due</span><strong>{{ format_money(invoice.balance_due) }}</strong></div>
+      </section>
+
+      {% if custom_message %}
+      <section class="notes">
+        <div class="section-title">Message</div>
+        <div>{{ custom_message }}</div>
+      </section>
+      {% endif %}
+
+      {% if invoice.notes %}
+      <section class="notes">
+        <div class="section-title">Internal Notes</div>
+        <div>{{ invoice.notes }}</div>
+      </section>
+      {% endif %}
+
+      <footer class="footer">
+        This document was generated for booking #{{ booking.confirmation_number }}.
+      </footer>
+    </main>
+  </body>
+</html>

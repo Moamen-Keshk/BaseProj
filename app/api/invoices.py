@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date
 
 from flask import jsonify, make_response, request
@@ -7,7 +8,8 @@ from sqlalchemy import or_
 from . import api
 from .. import db
 from app.api.decorators import require_permission
-from app.api.models import Booking
+from app.api.invoice_rendering import render_printable_invoice_html
+from app.api.models import Booking, GuestMessage
 from app.api.payments.models import BookingVCC, Invoice, Transaction
 from app.api.payments.services import (
     create_payment_intent_for_booking,
@@ -16,8 +18,11 @@ from app.api.payments.services import (
     sync_invoice_for_booking,
 )
 from app.api.payments.utils import decrypt_data
-from app.api.utils.notifications import notify_payment_failed, sync_arrival_issue_notification
+from app.api.utils.notifications import sync_arrival_issue_notification
 from app.auth.utils import get_current_user
+
+
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 def _parse_date(value):
@@ -36,6 +41,23 @@ def _parse_bool(value):
     if value is None:
         return False
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _is_valid_email(value):
+    return bool(_EMAIL_RE.match((value or '').strip()))
+
+
+def _queue_invoice_email_delivery(*, guest_message, **task_kwargs):
+    try:
+        from app.api.utils.guest_communication_task import send_invoice_email_task
+
+        send_invoice_email_task.delay(message_id=guest_message.id, **task_kwargs)
+    except Exception as exc:
+        logging.exception("Failed to queue invoice email: %s", str(exc))
+        guest_message.delivery_status = 'failed'
+        guest_message.delivery_error = 'Failed to queue invoice email.'
+        db.session.commit()
+        raise
 
 
 @api.route('/properties/<int:property_id>/invoices', methods=['GET', 'OPTIONS'], strict_slashes=False)
@@ -111,6 +133,39 @@ def get_booking_invoice(property_id, booking_id):
         })), 500
 
 
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/invoice/print', methods=['GET', 'OPTIONS'], strict_slashes=False)
+@require_permission('view_finance')
+def print_booking_invoice(property_id, booking_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        booking = _get_booking(property_id, booking_id)
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        invoice = getattr(booking, 'invoice', None)
+        if invoice is None:
+            invoice = sync_invoice_for_booking(booking)
+            db.session.commit()
+
+        response = make_response(render_printable_invoice_html(booking, invoice))
+        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        response.headers['Content-Disposition'] = f'inline; filename=invoice-{invoice.invoice_number}.html'
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except Exception as exc:
+        logging.exception("Error in print_booking_invoice: %s", exc)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to generate printable invoice.'
+        })), 500
+
+
 @api.route('/properties/<int:property_id>/bookings/<int:booking_id>/invoice/sync', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_finance')
 def sync_booking_invoice_route(property_id, booking_id):
@@ -134,8 +189,6 @@ def sync_booking_invoice_route(property_id, booking_id):
         )
         db.session.commit()
 
-        if transaction.status == 'failed' or transaction.processor_status == 'failed':
-            notify_payment_failed(booking, transaction)
         sync_arrival_issue_notification(booking)
         db.session.commit()
 
@@ -153,6 +206,89 @@ def sync_booking_invoice_route(property_id, booking_id):
         return make_response(jsonify({
             'status': 'error',
             'message': 'Failed to synchronize invoice.'
+        })), 500
+
+
+@api.route('/properties/<int:property_id>/bookings/<int:booking_id>/invoice/email', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@require_permission('manage_finance')
+def email_booking_invoice(property_id, booking_id):
+    if request.method == 'OPTIONS':
+        return make_response(jsonify({"status": "ok"})), 200
+
+    try:
+        booking = _get_booking(property_id, booking_id)
+        if not booking:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Booking not found.'
+            })), 404
+
+        invoice = getattr(booking, 'invoice', None)
+        if invoice is None:
+            invoice = sync_invoice_for_booking(booking)
+            db.session.flush()
+
+        payload = request.get_json(silent=True) or {}
+        recipient_email = (payload.get('email') or booking.email or '').strip()
+        if not recipient_email:
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Recipient email is required.'
+            })), 400
+        if not _is_valid_email(recipient_email):
+            return make_response(jsonify({
+                'status': 'fail',
+                'message': 'Recipient email is invalid.'
+            })), 400
+
+        property_name = getattr(booking.property_ref, 'name', None) or 'Your Property'
+        subject = (
+            payload.get('subject')
+            or f'Invoice {invoice.invoice_number} from {property_name}'
+        ).strip()
+        message_body = (payload.get('message') or '').strip()
+        delivery_subject = (
+            subject if 'DO NOT REPLY' in subject.upper() else f'{subject} DO NOT REPLY'
+        )
+
+        email_log = GuestMessage(
+            booking_id=booking.id,
+            property_id=property_id,
+            direction='outbound',
+            channel='email',
+            subject=subject,
+            message_body=message_body or f'Invoice {invoice.invoice_number}',
+            is_read=True,
+            delivery_status='queued',
+            sent_by_user_id=get_current_user(),
+        )
+        db.session.add(email_log)
+        db.session.commit()
+
+        _queue_invoice_email_delivery(
+            guest_message=email_log,
+            booking_id=booking.id,
+            property_id=property_id,
+            recipient_email=recipient_email,
+            subject=delivery_subject,
+            custom_message=message_body or None,
+        )
+
+        return make_response(jsonify({
+            'status': 'success',
+            'message': 'Invoice email queued for delivery.',
+            'data': {
+                'recipient_email': recipient_email,
+                'invoice': invoice.to_json(include_payments=False),
+                'email_log': email_log.to_json(),
+            },
+        })), 200
+    except Exception as exc:
+        logging.exception("Error in email_booking_invoice: %s", exc)
+        db.session.rollback()
+        return make_response(jsonify({
+            'status': 'error',
+            'message': 'Failed to email invoice.'
         })), 500
 
 

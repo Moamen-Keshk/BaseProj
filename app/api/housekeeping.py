@@ -7,7 +7,11 @@ from sqlalchemy import func
 from app.api.constants import Constants
 from app.api.decorators import require_active_staff
 from app.api.models import Booking, Room, RoomCleaningLog
-from app.api.utils.housekeeping_logic import resolve_housekeeping_display_status
+from app.api.utils.housekeeping_logic import (
+    ACTIVE_BOOKING_STATUS_IDS,
+    resolve_forecast_status,
+    resolve_housekeeping_display_status,
+)
 from .. import db
 from . import api
 
@@ -28,11 +32,6 @@ def get_housekeeping_data(property_id):
             }), 400
 
     today = datetime.now(UTC).date()
-    active_status_ids = [
-        Constants.BookingStatusCoding['Confirmed'],
-        Constants.BookingStatusCoding['Checked In'],
-    ]
-
     if target_date < today:
         # --- PAST: Return Audit Logs ---
         logs = db.session.query(RoomCleaningLog, Room).join(
@@ -55,7 +54,7 @@ def get_housekeeping_data(property_id):
         rooms = Room.query.filter_by(property_id=property_id).order_by(Room.room_number).all()
         overlapping_bookings = Booking.query.filter(
             Booking.property_id == property_id,
-            Booking.status_id.in_(active_status_ids),
+            Booking.status_id.in_(list(ACTIVE_BOOKING_STATUS_IDS)),
             Booking.check_in <= target_date,
             Booking.check_out >= target_date,
         ).all()
@@ -66,21 +65,14 @@ def get_housekeeping_data(property_id):
 
         for room in rooms:
             room_bookings = bookings_by_room.get(room.id, [])
-
-            if not room_bookings:
-                # Room is totally empty on this date
-                status = "Clean"
-            else:
-                # Check if this date is a check-out day or check-in day for any of the overlapping bookings
-                is_checkout = any(b.check_out == target_date for b in room_bookings)
-                is_checkin = any(b.check_in == target_date for b in room_bookings)
-
-                if is_checkout:
-                    status = "To be cleaned"  # Guest leaves, room gets dirty
-                elif is_checkin:
-                    status = "To be refreshed"  # Guest arrives, just needs a refresh
-                else:
-                    status = "Expected Occupied"
+            has_departure = any(b.check_out == target_date for b in room_bookings)
+            has_arrival = any(b.check_in == target_date for b in room_bookings)
+            has_active_stay = bool(room_bookings)
+            status = resolve_forecast_status(
+                has_arrival=has_arrival,
+                has_departure=has_departure,
+                has_active_stay=has_active_stay,
+            )
 
             forecast_data.append({
                 'room_id': room.id,
@@ -94,7 +86,7 @@ def get_housekeeping_data(property_id):
     rooms = Room.query.filter_by(property_id=property_id).order_by(Room.room_number).all()
     active_bookings = Booking.query.filter(
         Booking.property_id == property_id,
-        Booking.status_id.in_(active_status_ids),
+        Booking.status_id.in_(list(ACTIVE_BOOKING_STATUS_IDS)),
         Booking.check_in <= today,
         Booking.check_out > today,
     ).all()

@@ -14,7 +14,10 @@ from app.api.models import (
 from app.api.utils.housekeeping_logic import (
     apply_room_cleaning_status,
     is_manual_cleaning_status_allowed,
+    resolve_forecast_status,
     resolve_housekeeping_display_status,
+    should_auto_refresh_for_arrival,
+    should_auto_set_waiting,
 )
 
 
@@ -111,3 +114,77 @@ class HousekeepingLogicTestCase(unittest.TestCase):
         self.assertEqual(log.old_status_id, Constants.RoomCleaningStatusCoding['Clean'])
         self.assertEqual(log.new_status_id, Constants.RoomCleaningStatusCoding['Dirty'])
         self.assertEqual(log.user_name, 'Housekeeping User')
+
+    def test_forecast_status_prioritizes_departure_then_arrival_then_occupied(self):
+        self.assertEqual(
+            resolve_forecast_status(
+                has_arrival=True,
+                has_departure=True,
+                has_active_stay=True,
+            ),
+            'To be cleaned',
+        )
+        self.assertEqual(
+            resolve_forecast_status(
+                has_arrival=True,
+                has_departure=False,
+                has_active_stay=False,
+            ),
+            'To be refreshed',
+        )
+        self.assertEqual(
+            resolve_forecast_status(
+                has_arrival=False,
+                has_departure=False,
+                has_active_stay=True,
+            ),
+            'Expected Occupied',
+        )
+        self.assertEqual(
+            resolve_forecast_status(
+                has_arrival=False,
+                has_departure=False,
+                has_active_stay=False,
+            ),
+            'Clean',
+        )
+
+    def test_auto_refresh_allows_clean_and_ready_without_same_day_checkout(self):
+        self.assertTrue(
+            should_auto_refresh_for_arrival(
+                Constants.RoomCleaningStatusCoding['Clean'],
+                has_checkout_today=False,
+            )
+        )
+        self.assertTrue(
+            should_auto_refresh_for_arrival(
+                Constants.RoomCleaningStatusCoding['Ready'],
+                has_checkout_today=False,
+            )
+        )
+        self.assertFalse(
+            should_auto_refresh_for_arrival(
+                Constants.RoomCleaningStatusCoding['Dirty'],
+                has_checkout_today=False,
+            )
+        )
+        self.assertFalse(
+            should_auto_refresh_for_arrival(
+                Constants.RoomCleaningStatusCoding['Clean'],
+                has_checkout_today=True,
+            )
+        )
+
+    def test_auto_waiting_only_applies_to_occupancy_like_states(self):
+        self.assertTrue(
+            should_auto_set_waiting(Constants.RoomCleaningStatusCoding['Clean'])
+        )
+        self.assertTrue(
+            should_auto_set_waiting(Constants.RoomCleaningStatusCoding['Ready'])
+        )
+        self.assertTrue(
+            should_auto_set_waiting(Constants.RoomCleaningStatusCoding['Occupied'])
+        )
+        self.assertFalse(
+            should_auto_set_waiting(Constants.RoomCleaningStatusCoding['Service'])
+        )

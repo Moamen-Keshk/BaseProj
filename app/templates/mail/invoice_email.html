@@ -1,0 +1,81 @@
+<p>Dear {{ guest_name }},</p>
+
+{% if custom_message %}
+<p>{{ custom_message }}</p>
+{% else %}
+<p>Please find your invoice summary below for booking #{{ booking.confirmation_number }}.</p>
+{% endif %}
+
+<h3 style="margin: 20px 0 8px;">Invoice {{ invoice.invoice_number }}</h3>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 18px;">
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Status</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ invoice.status.replace('_', ' ').title() }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Issued</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ invoice.issue_date.strftime('%b %d, %Y') if invoice.issue_date else '-' }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Due</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ invoice.due_date.strftime('%b %d, %Y') if invoice.due_date else '-' }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Total</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ format_money(invoice.total_amount) }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Paid</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ format_money(invoice.amount_paid) }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Balance Due</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>{{ format_money(invoice.balance_due) }}</strong></td>
+  </tr>
+</table>
+
+{% if invoice.line_items %}
+<h3 style="margin: 20px 0 8px;">Charges</h3>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 18px;">
+  <thead>
+    <tr>
+      <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Description</th>
+      <th style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd;">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in invoice.line_items %}
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #f0f0f0;">{{ item.description }}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #f0f0f0; text-align: right;">{{ format_money(item.amount) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if invoice.notes %}
+<p><strong>Notes:</strong> {{ invoice.notes }}</p>
+{% endif %}
+
+<h3 style="margin: 20px 0 8px;">Property Details</h3>
+<table style="width: 100%; max-width: 480px; border-collapse: collapse;">
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Property</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.name }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Address</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.address }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Phone</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.phone_number }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Email</strong></td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">{{ property.email }}</td>
+  </tr>
+</table>
+
+<p style="margin-top: 24px;">Best regards,<br><strong>{{ property.name }} Management</strong></p>

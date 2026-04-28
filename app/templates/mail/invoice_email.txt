@@ -1,0 +1,35 @@
+Dear {{ guest_name }},
+
+{% if custom_message %}
+{{ custom_message }}
+{% else %}
+Please find your invoice summary below for booking #{{ booking.confirmation_number }}.
+{% endif %}
+
+Invoice: {{ invoice.invoice_number }}
+Status: {{ invoice.status.replace('_', ' ').title() }}
+Issued: {{ invoice.issue_date.strftime('%b %d, %Y') if invoice.issue_date else '-' }}
+Due: {{ invoice.due_date.strftime('%b %d, %Y') if invoice.due_date else '-' }}
+Total: {{ format_money(invoice.total_amount) }}
+Paid: {{ format_money(invoice.amount_paid) }}
+Balance Due: {{ format_money(invoice.balance_due) }}
+
+{% if invoice.line_items %}
+Charges:
+{% for item in invoice.line_items %}
+- {{ item.description }}: {{ format_money(item.amount) }}
+{% endfor %}
+{% endif %}
+
+{% if invoice.notes %}
+Notes: {{ invoice.notes }}
+{% endif %}
+
+Property Details:
+Property: {{ property.name }}
+Address: {{ property.address }}
+Phone: {{ property.phone_number }}
+Email: {{ property.email }}
+
+Best regards,
+{{ property.name }} Management
