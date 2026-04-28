@@ -4,11 +4,21 @@ from app.api.channel_manager.models import ChannelConnection, ChannelSyncJob
 
 class SyncDispatcher:
     @staticmethod
-    def queue_ari_push(property_id: int, room_ids: list[int], dates: list, reason: str):
-        active_connections = ChannelConnection.query.filter_by(
+    def queue_ari_push(
+        property_id: int,
+        room_ids: list[int],
+        dates: list,
+        reason: str,
+        channel_code: str | None = None,
+    ):
+        active_connections_query = ChannelConnection.query.filter_by(
             property_id=property_id,
             status='active'
-        ).all()
+        )
+        if channel_code:
+            active_connections_query = active_connections_query.filter_by(channel_code=channel_code)
+
+        active_connections = active_connections_query.all()
 
         for connection in active_connections:
             job = ChannelSyncJob(

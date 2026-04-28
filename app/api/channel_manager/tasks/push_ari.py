@@ -41,7 +41,8 @@ def process_ari_push_job(job_id: int):
         updates = ARIService.build_updates_for_room_dates(
             property_id=job.property_id,
             room_ids=room_ids,
-            dates=dates
+            dates=dates,
+            channel_code=job.channel_code,
         )
 
         result = adapter.push_ari(connection, updates)

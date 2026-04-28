@@ -6,7 +6,7 @@ from flask import request, make_response, jsonify
 from sqlalchemy import or_, and_, cast, String, func
 
 from . import api
-from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage, Room
+from app.api.models import Booking, RoomOnline, BookingRate, BookingStatus, GuestMessage, Room, RatePlan
 from .. import db
 from app.auth.utils import get_current_user
 from app.api.decorators import require_permission
@@ -35,6 +35,11 @@ from app.api.utils.notifications import (
     notify_overbooking_issue,
     sync_arrival_issue_notification,
     NotificationType,
+)
+from app.api.utils.revenue_management import (
+    DIRECT_CHANNEL_CODE,
+    build_dynamic_quote,
+    resolve_dynamic_nightly_rate,
 )
 
 
@@ -98,6 +103,47 @@ def _queue_guest_message_delivery(task_callable, *, guest_message, **task_kwargs
         raise
 
 
+def _resolve_booking_rate_plan(booking):
+    rate_plan_id = getattr(booking, 'rate_plan_id', None)
+    if rate_plan_id in (None, ''):
+        return None
+
+    try:
+        rate_plan_id = int(rate_plan_id)
+    except (TypeError, ValueError):
+        return None
+
+    return RatePlan.query.filter_by(
+        id=rate_plan_id,
+        property_id=getattr(booking, 'property_id', None),
+        is_active=True,
+    ).first()
+
+
+def _resolve_booking_nightly_rate(booking, target_date, *, stay_length):
+    rate_plan = _resolve_booking_rate_plan(booking)
+    if rate_plan is not None:
+        nightly_rate = resolve_dynamic_nightly_rate(
+            rate_plan=rate_plan,
+            stay_date=target_date,
+            stay_length=stay_length,
+            adults=int(getattr(booking, 'number_of_adults', None) or 2),
+            children=int(getattr(booking, 'number_of_children', None) or 0),
+            channel_code=getattr(booking, 'pricing_channel_code', None) or DIRECT_CHANNEL_CODE,
+            room_id=getattr(booking, 'room_id', None),
+        )
+        return nightly_rate, rate_plan.id
+
+    room_online = RoomOnline.query.filter_by(
+        room_id=booking.room_id,
+        date=target_date
+    ).first()
+    if room_online is not None:
+        return float(room_online.price), room_online.rate_plan_id
+
+    return 0.0, None
+
+
 @api.route('/properties/<int:property_id>/bookings', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @require_permission('manage_bookings')
 def new_booking(property_id):
@@ -148,6 +194,7 @@ def new_booking(property_id):
         # Force the property_id from the secured URL to prevent payload tampering
         booking.property_id = property_id
         booking.creator_id = user_id
+        booking.pricing_channel_code = booking.pricing_channel_code or DIRECT_CHANNEL_CODE
         booking.amount_paid = 0.0
 
         assign_nightly_rates(booking)
@@ -339,12 +386,19 @@ def edit_booking(property_id, booking_id):
             'number_of_children', 'payment_status_id', 'status_id', 'note',
             'special_request', 'check_in', 'check_out', 'check_in_day',
             'check_in_month', 'check_in_year', 'check_out_day', 'check_out_month',
-            'check_out_year', 'number_of_days', 'rate', 'room_id'
+            'check_out_year', 'number_of_days', 'rate', 'room_id',
+            'rate_plan_id', 'pricing_channel_code',
         ]
 
         for field in updateable_fields:
             if field in booking_data:
                 setattr(booking, field, booking_data[field])
+
+        if getattr(booking, 'rate_plan_id', None) not in (None, ''):
+            booking.rate_plan_id = int(booking.rate_plan_id)
+        else:
+            booking.rate_plan_id = None
+        booking.pricing_channel_code = booking.pricing_channel_code or DIRECT_CHANNEL_CODE
 
         BookingRate.query.filter_by(booking_id=booking.id).delete()
         assign_nightly_rates(booking)
@@ -715,13 +769,30 @@ def check_extension(property_id):
         if overlapping_bookings > 0:
             return make_response(jsonify({'status': 'success', 'available': False, 'extra_cost': 0.0})), 200
 
-        # Step 2: Calculate Exact Extra Cost based on RoomOnline daily rates
+        # Step 2: Calculate exact extra cost using the booking's assigned rate plan/channel.
+        booking = db.session.query(Booking).filter(
+            Booking.property_id == property_id,
+            Booking.room_id == room_id,
+            Booking.check_out == current_check_out,
+            Booking.status_id.in_(list(ACTIVE_BOOKING_STATUS_IDS)),
+        ).order_by(Booking.id.desc()).first()
+
         extra_cost = 0.0
         curr_date = current_check_out
+        stay_length = max(1, (new_check_out - booking.check_in).days) if booking else max(
+            1, (new_check_out - current_check_out).days
+        )
         while curr_date < new_check_out:
-            room_online = RoomOnline.query.filter_by(room_id=room_id, date=curr_date).first()
-            if room_online:
-                extra_cost += float(room_online.price)
+            if booking is not None:
+                nightly_rate, _ = _resolve_booking_nightly_rate(
+                    booking,
+                    curr_date,
+                    stay_length=stay_length,
+                )
+            else:
+                room_online = RoomOnline.query.filter_by(room_id=room_id, date=curr_date).first()
+                nightly_rate = float(room_online.price) if room_online else 0.0
+            extra_cost += float(nightly_rate)
             curr_date += timedelta(days=1)
 
         return make_response(jsonify({
@@ -774,15 +845,20 @@ def extend_booking(property_id, booking_id):
 
         # Step 2: Generate new BookingRate entries for the extended days
         curr_date = old_check_out
+        stay_length = max(1, (new_check_out - booking.check_in).days)
         while curr_date < new_check_out:
-            room_online = RoomOnline.query.filter_by(room_id=booking.room_id, date=curr_date).first()
-            nightly_rate = room_online.price if room_online else 0.0
+            nightly_rate, applied_rate_plan_id = _resolve_booking_nightly_rate(
+                booking,
+                curr_date,
+                stay_length=stay_length,
+            )
 
             booking.booking_rates.append(
                 BookingRate(
                     booking_id=booking.id,
                     rate_date=curr_date,
                     nightly_rate=nightly_rate,
+                    rate_plan_id=applied_rate_plan_id,
                 )
             )
             curr_date += timedelta(days=1)
@@ -929,20 +1005,21 @@ def assign_nightly_rates(booking):
 
     current_date = booking.check_in
     total = 0.0
+    stay_length = max(1, (booking.check_out - booking.check_in).days)
 
     while current_date < booking.check_out:
-        room_online = RoomOnline.query.filter_by(
-            room_id=booking.room_id,
-            date=current_date
-        ).first()
-
-        nightly_rate = room_online.price if room_online else 0.0
+        nightly_rate, applied_rate_plan_id = _resolve_booking_nightly_rate(
+            booking,
+            current_date,
+            stay_length=stay_length,
+        )
 
         booking.booking_rates.append(
             BookingRate(
                 booking_id=booking.id,
                 rate_date=current_date,
                 nightly_rate=nightly_rate,
+                rate_plan_id=applied_rate_plan_id,
             )
         )
 

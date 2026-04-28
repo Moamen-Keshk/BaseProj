@@ -791,6 +791,8 @@ class Booking(db.Model):
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'))
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
     requested_room_type_id = db.Column(db.Integer, db.ForeignKey('room_types.id'), index=True)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=True, index=True)
+    pricing_channel_code = db.Column(db.String(32), nullable=True, default='direct')
     creator_id = db.Column(db.String(32))
 
     # 👉 NEW: Store the exact amount paid so far
@@ -872,6 +874,8 @@ class Booking(db.Model):
             'property_id': self.property_id,
             'room_id': self.room_id,
             'requested_room_type_id': self.requested_room_type_id,
+            'rate_plan_id': self.rate_plan_id,
+            'pricing_channel_code': self.pricing_channel_code,
             'creator_id': self.creator_id,
             'invoice_id': invoice.id if invoice else None,
             'invoice_number': invoice.invoice_number if invoice else None,
@@ -920,6 +924,8 @@ class Booking(db.Model):
             property_id=json_booking.get('property_id'),
             room_id=json_booking.get('room_id'),
             requested_room_type_id=json_booking.get('requested_room_type_id'),
+            rate_plan_id=int(json_booking.get('rate_plan_id')) if json_booking.get('rate_plan_id') not in (None, '') else None,
+            pricing_channel_code=json_booking.get('pricing_channel_code'),
             creator_id=json_booking.get('creator_id'),
         )
 
@@ -945,6 +951,7 @@ class BookingRate(db.Model):
     booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=False)
     rate_date = db.Column(db.Date, nullable=False)
     nightly_rate = db.Column(db.Float, nullable=False)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=True, index=True)
 
     booking = db.relationship('Booking', back_populates='booking_rates')
 
@@ -956,7 +963,8 @@ class BookingRate(db.Model):
             'id': self.id,
             'booking_id': self.booking_id,
             'rate_date': self.rate_date.isoformat() if self.rate_date else None,
-            'nightly_rate': self.nightly_rate
+            'nightly_rate': self.nightly_rate,
+            'rate_plan_id': self.rate_plan_id,
         }
 
     @staticmethod
@@ -967,7 +975,8 @@ class BookingRate(db.Model):
         return BookingRate(
             booking_id=json_data.get('booking_id'),
             rate_date=rate_date,
-            nightly_rate=json_data.get('nightly_rate')
+            nightly_rate=json_data.get('nightly_rate'),
+            rate_plan_id=json_data.get('rate_plan_id'),
         )
 
 class BookingStatus(db.Model):
@@ -1194,6 +1203,240 @@ class RoomOnline(db.Model):
             date=datetime.fromisoformat(json_data.get('date')).date(),
             price=json_data.get('price')
         )
+
+
+class DailyRatePlanState(db.Model):
+    __tablename__ = 'daily_rate_plan_state'
+    __table_args__ = (
+        db.UniqueConstraint(
+            'property_id', 'sellable_type_id', 'rate_plan_id', 'stay_date', 'channel_code',
+            name='uq_daily_rate_plan_state',
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    sellable_type_id = db.Column(db.Integer, nullable=False, index=True)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=False, index=True)
+    stay_date = db.Column(db.Date, nullable=False, index=True)
+    channel_code = db.Column(db.String(32), nullable=False, default='base', index=True)
+    base_amount = db.Column(db.Float, nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    min_los = db.Column(db.Integer, nullable=True)
+    max_los = db.Column(db.Integer, nullable=True)
+    closed = db.Column(db.Boolean, nullable=False, default=False)
+    closed_to_arrival = db.Column(db.Boolean, nullable=False, default=False)
+    closed_to_departure = db.Column(db.Boolean, nullable=False, default=False)
+    source_type = db.Column(db.String(32), nullable=False, default='rate_plan')
+    is_locked = db.Column(db.Boolean, nullable=False, default=False)
+    explanation_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'sellable_type_id': self.sellable_type_id,
+            'room_type_id': self.sellable_type_id,
+            'category_id': self.sellable_type_id,
+            'rate_plan_id': self.rate_plan_id,
+            'stay_date': self.stay_date.isoformat() if self.stay_date else None,
+            'channel_code': self.channel_code,
+            'base_amount': float(self.base_amount or 0.0),
+            'amount': float(self.amount or 0.0),
+            'min_los': self.min_los,
+            'max_los': self.max_los,
+            'closed': bool(self.closed),
+            'closed_to_arrival': bool(self.closed_to_arrival),
+            'closed_to_departure': bool(self.closed_to_departure),
+            'source_type': self.source_type,
+            'is_locked': bool(self.is_locked),
+            'explanation_json': self.explanation_json or {},
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class RevenuePolicy(db.Model):
+    __tablename__ = 'revenue_policies'
+    __table_args__ = (
+        db.UniqueConstraint('property_id', 'sellable_type_id', 'channel_code', name='uq_revenue_policy'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    sellable_type_id = db.Column(db.Integer, nullable=False, index=True)
+    channel_code = db.Column(db.String(32), nullable=False, default='base', index=True)
+    min_rate = db.Column(db.Float, nullable=True)
+    max_rate = db.Column(db.Float, nullable=True)
+    high_occupancy_threshold = db.Column(db.Float, nullable=False, default=0.75)
+    low_occupancy_threshold = db.Column(db.Float, nullable=False, default=0.35)
+    high_occupancy_uplift_pct = db.Column(db.Float, nullable=False, default=12.0)
+    low_occupancy_discount_pct = db.Column(db.Float, nullable=False, default=8.0)
+    short_lead_time_days = db.Column(db.Integer, nullable=False, default=7)
+    short_lead_uplift_pct = db.Column(db.Float, nullable=False, default=10.0)
+    long_lead_time_days = db.Column(db.Integer, nullable=False, default=30)
+    long_lead_discount_pct = db.Column(db.Float, nullable=False, default=5.0)
+    pickup_window_days = db.Column(db.Integer, nullable=False, default=3)
+    pickup_uplift_pct = db.Column(db.Float, nullable=False, default=6.0)
+    channel_adjustment_pct = db.Column(db.Float, nullable=False, default=0.0)
+    auto_apply_min_confidence = db.Column(db.Float, nullable=False, default=0.85)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'sellable_type_id': self.sellable_type_id,
+            'room_type_id': self.sellable_type_id,
+            'category_id': self.sellable_type_id,
+            'channel_code': self.channel_code,
+            'min_rate': self.min_rate,
+            'max_rate': self.max_rate,
+            'high_occupancy_threshold': float(self.high_occupancy_threshold or 0.0),
+            'low_occupancy_threshold': float(self.low_occupancy_threshold or 0.0),
+            'high_occupancy_uplift_pct': float(self.high_occupancy_uplift_pct or 0.0),
+            'low_occupancy_discount_pct': float(self.low_occupancy_discount_pct or 0.0),
+            'short_lead_time_days': int(self.short_lead_time_days or 0),
+            'short_lead_uplift_pct': float(self.short_lead_uplift_pct or 0.0),
+            'long_lead_time_days': int(self.long_lead_time_days or 0),
+            'long_lead_discount_pct': float(self.long_lead_discount_pct or 0.0),
+            'pickup_window_days': int(self.pickup_window_days or 0),
+            'pickup_uplift_pct': float(self.pickup_uplift_pct or 0.0),
+            'channel_adjustment_pct': float(self.channel_adjustment_pct or 0.0),
+            'auto_apply_min_confidence': float(self.auto_apply_min_confidence or 0.0),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class MarketEvent(db.Model):
+    __tablename__ = 'market_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    sellable_type_id = db.Column(db.Integer, nullable=True, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    uplift_pct = db.Column(db.Float, nullable=False, default=0.0)
+    flat_delta = db.Column(db.Float, nullable=False, default=0.0)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'sellable_type_id': self.sellable_type_id,
+            'room_type_id': self.sellable_type_id,
+            'category_id': self.sellable_type_id,
+            'name': self.name,
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
+            'uplift_pct': float(self.uplift_pct or 0.0),
+            'flat_delta': float(self.flat_delta or 0.0),
+            'is_active': bool(self.is_active),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class RevenueRecommendation(db.Model):
+    __tablename__ = 'revenue_recommendations'
+    __table_args__ = (
+        db.UniqueConstraint(
+            'property_id', 'sellable_type_id', 'rate_plan_id', 'stay_date', 'channel_code',
+            name='uq_revenue_recommendation',
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    sellable_type_id = db.Column(db.Integer, nullable=False, index=True)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=False, index=True)
+    stay_date = db.Column(db.Date, nullable=False, index=True)
+    channel_code = db.Column(db.String(32), nullable=False, default='base', index=True)
+    baseline_amount = db.Column(db.Float, nullable=False)
+    recommended_amount = db.Column(db.Float, nullable=False)
+    confidence_score = db.Column(db.Float, nullable=False, default=0.0)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    reason_codes_json = db.Column(db.JSON, nullable=True)
+    explanation_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'sellable_type_id': self.sellable_type_id,
+            'room_type_id': self.sellable_type_id,
+            'category_id': self.sellable_type_id,
+            'rate_plan_id': self.rate_plan_id,
+            'stay_date': self.stay_date.isoformat() if self.stay_date else None,
+            'channel_code': self.channel_code,
+            'baseline_amount': float(self.baseline_amount or 0.0),
+            'recommended_amount': float(self.recommended_amount or 0.0),
+            'confidence_score': float(self.confidence_score or 0.0),
+            'status': self.status,
+            'reason_codes_json': self.reason_codes_json or [],
+            'explanation_json': self.explanation_json or {},
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class RevenueAuditLog(db.Model):
+    __tablename__ = 'revenue_audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
+    sellable_type_id = db.Column(db.Integer, nullable=False, index=True)
+    rate_plan_id = db.Column(db.Integer, db.ForeignKey('rate_plans.id'), nullable=False, index=True)
+    stay_date = db.Column(db.Date, nullable=False, index=True)
+    channel_code = db.Column(db.String(32), nullable=False, default='base', index=True)
+    action = db.Column(db.String(32), nullable=False)
+    previous_amount = db.Column(db.Float, nullable=True)
+    new_amount = db.Column(db.Float, nullable=True)
+    metadata_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'property_id': self.property_id,
+            'sellable_type_id': self.sellable_type_id,
+            'room_type_id': self.sellable_type_id,
+            'category_id': self.sellable_type_id,
+            'rate_plan_id': self.rate_plan_id,
+            'stay_date': self.stay_date.isoformat() if self.stay_date else None,
+            'channel_code': self.channel_code,
+            'action': self.action,
+            'previous_amount': self.previous_amount,
+            'new_amount': self.new_amount,
+            'metadata_json': self.metadata_json or {},
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
 
 class Block(db.Model):
     __tablename__ = 'blocks'

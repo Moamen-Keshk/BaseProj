@@ -1,6 +1,6 @@
 from datetime import datetime
 from app import db
-from app.api.channel_manager.models import ChannelReservationLink, ChannelRoomMap
+from app.api.channel_manager.models import ChannelReservationLink, ChannelRoomMap, ChannelRatePlanMap
 from app.api.models import Booking, Room
 from flask_socketio import SocketIO
 from app.api.utils.pricing_engine import get_room_sellable_type_id
@@ -74,6 +74,15 @@ class ReservationImportService:
         ).first()
 
         internal_room_id, internal_room_type_id = ReservationImportService._resolve_internal_room(connection, reservation_payload)
+        external_rate_plan_id = first_room.get('external_rate_plan_id')
+        rate_plan_mapping = None
+        if external_rate_plan_id:
+            rate_plan_mapping = ChannelRatePlanMap.query.filter_by(
+                property_id=connection.property_id,
+                channel_code=connection.channel_code,
+                external_rate_plan_id=str(external_rate_plan_id),
+                is_active=True,
+            ).first()
 
         # --- 2. UPDATE EXISTING BOOKING ---
         if link:
@@ -92,6 +101,9 @@ class ReservationImportService:
                     # Update Room & Rate Details
                     booking.number_of_adults = first_room.get('guests', booking.number_of_adults)
                     booking.rate = reservation_payload.get('total_price', booking.rate)
+                    if rate_plan_mapping:
+                        booking.rate_plan_id = rate_plan_mapping.internal_rate_plan_id
+                        booking.pricing_channel_code = connection.channel_code
                     if internal_room_id:
                         booking.room_id = internal_room_id
                     if internal_room_type_id:
@@ -175,6 +187,9 @@ class ReservationImportService:
             booking.room_id = internal_room_id
         if internal_room_type_id:
             booking.requested_room_type_id = internal_room_type_id
+        if rate_plan_mapping:
+            booking.rate_plan_id = rate_plan_mapping.internal_rate_plan_id
+        booking.pricing_channel_code = connection.channel_code
         booking.source = connection.channel_code
         booking.status_id = 1  # Default to 1 (Confirmed) based on your BookingStatus table
 

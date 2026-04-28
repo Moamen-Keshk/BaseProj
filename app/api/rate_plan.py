@@ -12,8 +12,12 @@ from app.api.utils.room_online_generator import (
 )
 from app.api.utils.pricing_engine import (
     build_rate_plan_validation_errors,
-    calculate_quote,
     get_rate_plan_room_type_id,
+)
+from app.api.utils.revenue_management import (
+    build_dynamic_quote,
+    delete_daily_revenue_for_rate_plan,
+    refresh_daily_rates_for_rate_plan,
 )
 from app.api.channel_manager.services.pms_sync import (
     queue_rate_plan_ari_sync,
@@ -85,6 +89,7 @@ def new_rate_plan(property_id):
         db.session.flush()
         db.session.commit()
 
+        refresh_daily_rates_for_rate_plan(rate_plan)
         generate_or_update_room_online_for_rate_plan(rate_plan)
         queue_rate_plan_ari_sync(rate_plan, 'rate_plan_created')
 
@@ -189,6 +194,12 @@ def edit_rate_plan(property_id, rate_plan_id):
         rate_plan.is_active = new_is_active
 
         db.session.commit()
+        refresh_daily_rates_for_rate_plan(
+            rate_plan,
+            previous_sellable_type_id=old_room_type_id or old_category_id,
+            previous_start_date=old_start_date,
+            previous_end_date=old_end_date,
+        )
         generate_or_update_room_online_for_rate_plan(rate_plan)
 
         queue_rate_plan_transition_ari_sync(
@@ -333,12 +344,15 @@ def quote_rate_plan(property_id, rate_plan_id):
         adults = int(request.args.get('adults', 2))
         children = int(request.args.get('children', 0))
 
-        quote = calculate_quote(
+        channel_code = request.args.get('channel_code')
+        quote = build_dynamic_quote(
             rate_plan=rate_plan,
             check_in=check_in,
             check_out=check_out,
             adults=adults,
             children=children,
+            channel_code=channel_code,
+            sellable_type_id=get_rate_plan_room_type_id(rate_plan),
         )
 
         return make_response(jsonify({
@@ -380,6 +394,7 @@ def delete_rate_plan(property_id, rate_plan_id):
         old_start_date = rate_plan.start_date
         old_end_date = rate_plan.end_date
 
+        delete_daily_revenue_for_rate_plan(old_property_id, rate_plan.id)
         db.session.delete(rate_plan)
         db.session.flush()
 

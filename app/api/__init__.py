@@ -17,6 +17,7 @@ from . import (
     room_types,
     payment_status,
     rate_plan,
+    revenue,
     season,
     room_online,
     blocks,

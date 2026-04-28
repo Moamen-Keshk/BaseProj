@@ -9,6 +9,7 @@ from .. import db
 from app.api.decorators import require_permission
 from app.api.utils.room_online_generator import update_room_online_for_season
 from app.api.utils.rate_plan_rules import get_overlapping_seasons
+from app.api.utils.revenue_management import rebuild_daily_rates_for_property_range
 from app.api.channel_manager.services.pms_sync import (
     queue_season_ari_sync,
     queue_season_transition_ari_sync,
@@ -64,6 +65,7 @@ def new_season(property_id):
         db.session.add(season)
         db.session.commit()
 
+        rebuild_daily_rates_for_property_range(property_id, start_date, end_date)
         update_room_online_for_season(season)
 
         # New season = only queue the new range
@@ -143,6 +145,7 @@ def update_season(property_id, season_id):
             season.label = data['label']
 
         db.session.commit()
+        rebuild_daily_rates_for_property_range(property_id, new_start_date, new_end_date)
         update_room_online_for_season(season)
 
         queue_season_transition_ari_sync(
@@ -217,6 +220,7 @@ def delete_season(property_id, season_id):
         db.session.delete(season)
         db.session.flush()  # Don't commit yet
 
+        rebuild_daily_rates_for_property_range(property_id_stored, start_date, end_date)
         update_room_online_for_season(SimpleNamespace(
             property_id=property_id_stored,
             start_date=start_date,
